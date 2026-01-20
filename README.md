@@ -4,7 +4,7 @@
 # Django Project Setup Guide
 
 This repository contains a Django application that uses environment-based configuration.
-Follow the steps below to set up and run the project locally or in production.
+Follow the steps below to set up and run the project locally or in production
 
 ---
 
