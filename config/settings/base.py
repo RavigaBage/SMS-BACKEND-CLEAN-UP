@@ -59,6 +59,7 @@ TEMPLATES = [
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
+                "django.template.context_processors.debug",
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
@@ -76,7 +77,10 @@ DATABASES = {
         "PASSWORD": config("MYSQL_PASSWORD", default="sms_password"),
         "HOST": config("MYSQL_HOST", default="db"),
         "PORT": config("MYSQL_PORT", default="3306"),
-        "OPTIONS": {"charset": "utf8mb4"},
+        "OPTIONS": {
+            "init_command": "'SET sql_mode=STRICT_TRANS_TABLES'",
+            "charset": "utf8mb4"
+        },
     }
 }
 

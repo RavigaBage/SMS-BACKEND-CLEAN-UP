@@ -4,6 +4,9 @@ DEBUG = True
 ALLOWED_HOSTS = ["*"]
 CORS_ALLOW_ALL_ORIGINS = True
 
+# Development-specific settings
+INSTALLED_APPS += ['django_extensions']
+
 # Disable throttling in dev
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
 
@@ -14,3 +17,17 @@ DATABASES = {
          "NAME": BASE_DIR / "db.sqlite3",
      }
  }
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'DEBUG',
+    },
+}
