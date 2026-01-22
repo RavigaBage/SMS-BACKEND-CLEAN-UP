@@ -75,13 +75,13 @@ urlpatterns = [
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     
     # Authentication endpoints
-    path('api/auth/login/', LoginView.as_view(), name='login'),
-    path('api/auth/refresh', RefreshTokenView.as_view(), name='token-refresh'),
-    path('api/auth/logout/', LogoutView.as_view(), name='logout'),
-    path('api/auth/me/', CurrentUserView.as_view(), name='current-user'),
+    path('auth/login/', LoginView.as_view(), name='login'),
+    path('auth/refresh', RefreshTokenView.as_view(), name='token-refresh'),
+    path('auth/logout/', LogoutView.as_view(), name='logout'),
+    path('auth/me/', CurrentUserView.as_view(), name='current-user'),
     
     # API routes
-    path('api/', include(router.urls)),
+    path('', include(router.urls)),
 ]
 
 # Serve static and media files in development

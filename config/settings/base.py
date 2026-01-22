@@ -224,7 +224,25 @@ SPECTACULAR_SETTINGS = {
     # Schema customization
     'SCHEMA_PATH_PREFIX': '/api/',
     'SCHEMA_PATH_PREFIX_TRIM': True,
-    
+
+    # Swagger UI settings
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
+        'filter': True,  # Enable filter/search bar
+        'tryItOutEnabled': True,
+        'displayRequestDuration': True,
+        'docExpansion': 'list',  # 'list', 'full', or 'none'
+        'defaultModelsExpandDepth': 3,
+        'defaultModelExpandDepth': 3,
+        'defaultModelRendering': 'model',  # 'example' or 'model'
+        'tagsSorter': 'alpha',  # Sort tags alphabetically
+        'operationsSorter': 'alpha',  # Sort operations alphabetically
+        'showExtensions': True,
+        'showCommonExtensions': True,
+    },
+
     # Authentication
     'APPEND_COMPONENTS': {
         'securitySchemes': {
@@ -246,4 +264,22 @@ SPECTACULAR_SETTINGS = {
 
     # Let drf-spectacular auto-generate enum names (they'll have hash suffixes but will work)
     'ENUM_GENERATE_CHOICE_DESCRIPTION': True,    
+
+    # Tags - organize endpoints by category
+    # 'TAGS': [
+    #     {'name': 'Authentication', 'description': 'Login, logout, token management'},
+    #     {'name': 'Users', 'description': 'User account management'},
+    #     {'name': 'Staff', 'description': 'Staff management and HR operations'},
+    #     {'name': 'Students', 'description': 'Student registration and management'},
+    #     {'name': 'Parents', 'description': 'Parent/guardian information'},
+    #     {'name': 'Academic', 'description': 'Academic years, classes, subjects'},
+    #     {'name': 'Grades', 'description': 'Grade management and reports'},
+    #     {'name': 'Attendance', 'description': 'Attendance tracking and reports'},
+    #     {'name': 'Finance', 'description': 'Fee management, invoices, payments'},
+    #     {'name': 'Timetable', 'description': 'Class schedules and syllabus'},
+    #     {'name': 'System', 'description': 'Health checks and system info'},
+    # ],
+    
+    # Preprocessing hook to add tags
+    # 'PREPROCESSING_HOOKS': ['scripts.schema_hooks.preprocess_schema_tags'],
 }
