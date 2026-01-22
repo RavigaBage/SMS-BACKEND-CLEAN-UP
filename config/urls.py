@@ -7,7 +7,7 @@ from rest_framework import routers
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 # Import views
-from apps.accounts.views import UserViewSet, LoginView, LogoutView, CurrentUserView, health_check
+from apps.accounts.views import UserViewSet, LoginView, RefreshTokenView, LogoutView, CurrentUserView, health_check
 from apps.staff.views import (
     StaffViewSet, SalaryStructureViewSet, SalaryPaymentViewSet,
     StaffAttendanceViewSet, LeaveRequestViewSet
@@ -24,6 +24,7 @@ from apps.finance.views import (
     ExpenditureViewSet, FinancialDashboardViewSet
 )
 from apps.timetable.views import TimetableViewSet
+
 # Create router
 router = routers.DefaultRouter()
 
@@ -75,6 +76,7 @@ urlpatterns = [
     
     # Authentication endpoints
     path('api/auth/login/', LoginView.as_view(), name='login'),
+    path('api/auth/refresh', RefreshTokenView.as_view(), name='token-refresh'),
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
     path('api/auth/me/', CurrentUserView.as_view(), name='current-user'),
     

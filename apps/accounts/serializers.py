@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from django.contrib.auth import authenticate
 from .models import User
 
 
@@ -21,37 +23,70 @@ class UserSerializer(serializers.ModelSerializer):
         }
 
 
-class LoginSerializer(serializers.Serializer):
-    """Serializer for login"""
-    username = serializers.CharField(required=True)
-    password = serializers.CharField(required=True, write_only=True)
-
-
-class LoginResponseSerializer(serializers.Serializer):
-    """Serializer for login response"""
-    token = serializers.CharField()
-    user = UserSerializer()
-
-
-class UserCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating users"""
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Custom serializer to use email instead of username for login
+    and include user data in response
+    """
     
-    password = serializers.CharField(write_only=True, required=False)
+    username_field = 'email'
     
-    class Meta:
-        model = User
-        fields = ['username', 'email', 'password', 'role']
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Replace username field with email
+        self.fields['email'] = serializers.EmailField(required=True)
+        self.fields.pop('username', None)
     
-    def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("This email is already in use.")
-        return value
+    def validate(self, attrs):
+        # Get email and password from request
+        email = attrs.get('email')
+        password = attrs.get('password')
+        
+        # Find user by email
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError('Invalid email or password')
+        
+        # Check if user is active
+        if not user.is_active:
+            raise serializers.ValidationError('Account is deactivated')
+        
+        # Authenticate using username (Django's authenticate requires username)
+        user = authenticate(username=user.username, password=password)
+        
+        if user is None:
+            raise serializers.ValidationError('Invalid email or password')
+        
+        # Get tokens
+        refresh = self.get_token(user)
+        
+        data = {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'role_display': user.get_role_display(),
+            }
+        }
+        
+        return data
+
+
+class CustomTokenRefreshSerializer(TokenRefreshSerializer):
+    """Custom token refresh serializer"""
+    pass
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    """Serializer for password change"""
+    """
+    Serializer for admin to change user password
+    No old password required - admin override
+    """
     
-    old_password = serializers.CharField(required=True, write_only=True)
     new_password = serializers.CharField(required=True, write_only=True, min_length=10)
     confirm_password = serializers.CharField(required=True, write_only=True)
     

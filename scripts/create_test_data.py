@@ -1,8 +1,10 @@
 import os
 import django
-import sys
+import sys 
+from pathlib import Path
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(BASE_DIR))
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
 django.setup()
@@ -21,7 +23,7 @@ def create_test_data():
     admin, created = User.objects.get_or_create(
         username='admin',
         defaults={
-            'email': 'admin@school.com',
+            'email': 'admin@school.com',  # Make sure email is set
             'role': 'admin',
             'is_active': True,
             'is_staff': True,
@@ -31,9 +33,16 @@ def create_test_data():
     if created:
         admin.set_password('admin123456')
         admin.save()
-        print(f"✓ Created admin user: admin / admin123456")
+        print(f"✓ Created admin user")
+        print(f"  Email: admin@school.com")
+        print(f"  Password: admin123456")
     else:
+        # Update existing admin to ensure email is set
+        if not admin.email:
+            admin.email = 'admin@school.com'
+            admin.save()
         print(f"✓ Admin user already exists")
+        print(f"  Email: {admin.email}")
     
     # 2. Create academic year
     academic_year, created = AcademicYear.objects.get_or_create(
@@ -66,7 +75,7 @@ def create_test_data():
     print("Test data created successfully!")
     print("="*50)
     print("\nLogin credentials:")
-    print("Username: admin")
+    print("Email: admin@school.com")
     print("Password: admin123456")
     print("="*50)
 

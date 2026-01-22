@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 from decouple import config
+from datetime import timedelta
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -19,7 +20,8 @@ INSTALLED_APPS = [
     
     # Third party
     'rest_framework',
-    'rest_framework.authtoken',  # Changed from simplejwt
+    # 'rest_framework.authtoken',  # Changed from simplejwt
+    'rest_framework_simplejwt', # Changed back to JWT
     'corsheaders',
     'django_filters',
     'drf_spectacular',
@@ -114,8 +116,9 @@ AUTH_USER_MODEL = 'accounts.User'
 # REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',  # Changed from JWT
-        'rest_framework.authentication.SessionAuthentication',  # For browsable API
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # 'rest_framework.authentication.TokenAuthentication',  # Changed from JWT
+        # 'rest_framework.authentication.SessionAuthentication',  # For browsable API
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -130,8 +133,29 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
-# Token expiration (optional - tokens don't expire by default)
-# If you want token expiration, you can implement a custom authentication class
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    
+    'JTI_CLAIM': 'jti',
+}
 
 # CORS
 CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:3000').split(',')
@@ -204,15 +228,21 @@ SPECTACULAR_SETTINGS = {
     # Authentication
     'APPEND_COMPONENTS': {
         'securitySchemes': {
-            'tokenAuth': {
-                'type': 'apiKey',
-                'in': 'header',
-                'name': 'Authorization',
-                'description': 'Token-based authentication with required prefix "Token"'
+            # 'tokenAuth': {
+            #     'type': 'apiKey',
+            #     'in': 'header',
+            #     'name': 'Authorization',
+            #     'description': 'Token-based authentication with required prefix "Token"'
+            # }
+            'jwtAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+                'description': 'JWT Authentication using access token'
             }
         }
     },
-    'SECURITY': [{'tokenAuth': []}],
+    'SECURITY': [{'jwtAuth': []}],
 
     # Let drf-spectacular auto-generate enum names (they'll have hash suffixes but will work)
     'ENUM_GENERATE_CHOICE_DESCRIPTION': True,    

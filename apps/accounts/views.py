@@ -2,103 +2,121 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.authtoken.models import Token
 from rest_framework.generics import GenericAPIView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from django.contrib.auth import authenticate
-from django.contrib.auth import update_session_auth_hash
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
 from .models import User
 from .serializers import (
-    UserSerializer, UserCreateSerializer, ChangePasswordSerializer, 
-    LoginSerializer, LoginResponseSerializer
+    UserSerializer,
+    CustomTokenObtainPairSerializer,
+    CustomTokenRefreshSerializer,
+    ChangePasswordSerializer
 )
 from .permissions import IsAdminOrHeadmaster
 
 
-class LoginView(GenericAPIView):
+class LoginView(TokenObtainPairView):
     """
-    Login endpoint - returns auth token
-    """
-    serializer_class = LoginSerializer
-    permission_classes = [AllowAny]
+    Login endpoint - returns access and refresh tokens
     
-    @extend_schema(
-        request=LoginSerializer,
-        responses={
-            200: LoginResponseSerializer,
-            401: OpenApiResponse(description="Invalid credentials"),
-            403: OpenApiResponse(description="Account deactivated")
-        },
-        description="Authenticate user and return token"
-    )
-    def post(self, request):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        username = serializer.validated_data['username']
-        password = serializer.validated_data['password']
-        
-        user = authenticate(username=username, password=password)
-        
-        if user is not None:
-            if not user.is_active:
-                return Response(
-                    {'error': 'Account is deactivated'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Create or get token
-            token, created = Token.objects.get_or_create(user=user)
-            
-            # Update last login
-            from django.utils import timezone
-            user.last_login = timezone.now()
-            user.save(update_fields=['last_login'])
-            
-            response_serializer = LoginResponseSerializer({
-                'token': token.key,
-                'user': user
-            })
-            
-            return Response(response_serializer.data, status=status.HTTP_200_OK)
-        else:
-            return Response(
-                {'error': 'Invalid credentials'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+    POST /api/v1/auth/login/
+    {
+        "email": "admin@school.com",
+        "password": "password"
+    }
+    
+    Returns:
+    {
+        "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+        "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+        "user": {
+            "id": 1,
+            "username": "admin",
+            "email": "admin@school.com",
+            "role": "admin",
+            "role_display": "Admin"
+        }
+    }
+    """
+    serializer_class = CustomTokenObtainPairSerializer
+    permission_classes = [AllowAny]
+
+
+class RefreshTokenView(TokenRefreshView):
+    """
+    Refresh access token using refresh token
+    
+    POST /api/v1/auth/refresh/
+    {
+        "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+    }
+    
+    Returns:
+    {
+        "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+        "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."  // New refresh token (token rotation)
+    }
+    """
+    serializer_class = CustomTokenRefreshSerializer
+    permission_classes = [AllowAny]
 
 
 class LogoutView(GenericAPIView):
     """
-    Logout endpoint - deletes auth token
+    Logout endpoint - blacklists the refresh token
+    
+    POST /api/v1/auth/logout/
+    {
+        "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+    }
     """
     permission_classes = [IsAuthenticated]
     
     @extend_schema(
-        request=None,
+        request={'application/json': {'type': 'object', 'properties': {'refresh': {'type': 'string'}}}},
         responses={
             200: OpenApiResponse(description="Successfully logged out"),
-            500: OpenApiResponse(description="Server error")
+            400: OpenApiResponse(description="Invalid token")
         },
-        description="Logout user and delete authentication token"
+        description="Logout user and blacklist refresh token"
     )
     def post(self, request):
         try:
-            # Delete the user's token
-            request.user.auth_token.delete()
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
+                return Response(
+                    {"error": "Refresh token is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            
             return Response(
-                {'message': 'Successfully logged out'},
+                {"message": "Successfully logged out"},
                 status=status.HTTP_200_OK
+            )
+        except TokenError:
+            return Response(
+                {"error": "Invalid token"},
+                status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
 
 class CurrentUserView(GenericAPIView):
-    """Get current logged-in user details"""
+    """
+    Get current logged-in user details
+    
+    GET /api/v1/auth/me/
+    """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     
@@ -118,6 +136,9 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
     
+    # Disable unused actions
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+    
     def get_queryset(self):
         queryset = super().get_queryset()
         
@@ -136,38 +157,26 @@ class UserViewSet(viewsets.ModelViewSet):
     @extend_schema(
         request=ChangePasswordSerializer,
         responses={200: OpenApiResponse(description="Password changed successfully")},
-        description="Change user password"
+        description="Change user password (Admin/Headmaster only)"
     )
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrHeadmaster])
     def change_password(self, request, pk=None):
-        """Change user password"""
+        """
+        Admin/Headmaster changes user password
+        No old password required - admin override
+        """
         user = self.get_object()
-        
-        # Users can only change their own password unless admin/headmaster
-        if user != request.user and request.user.role not in [User.Role.ADMIN, User.Role.HEADMASTER]:
-            return Response(
-                {'error': 'You can only change your own password'},
-                status=status.HTTP_403_FORBIDDEN
-            )
         
         serializer = ChangePasswordSerializer(data=request.data)
         if serializer.is_valid():
-            # Check old password
-            if not user.check_password(serializer.validated_data['old_password']):
-                return Response(
-                    {'error': 'Old password is incorrect'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Set new password
-            user.set_password(serializer.validated_data['new_password'])
+            # Admin can change any password without knowing old password
+            new_password = serializer.validated_data['new_password']
+            user.set_password(new_password)
             user.save()
             
-            # Update token (force re-login)
-            Token.objects.filter(user=user).delete()
-            Token.objects.create(user=user)
-            
-            return Response({'message': 'Password changed successfully. Please login again.'})
+            return Response({
+                'message': f'Password changed successfully for {user.username}. User must login with new password.'
+            })
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
@@ -189,9 +198,6 @@ class UserViewSet(viewsets.ModelViewSet):
         
         user.is_active = False
         user.save()
-        
-        # Delete user's token
-        Token.objects.filter(user=user).delete()
         
         return Response({'message': 'User deactivated successfully'})
     
