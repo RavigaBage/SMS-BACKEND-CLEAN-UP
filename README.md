@@ -78,11 +78,13 @@ pip install -r requirements/base.txt
 The project requires **environment-specific variables**.
 
 ### Required Files
+Create the following file and folder
 
-* `.env.development` → for local development
-* `.env.production` → for production deployment
+* `.env` → for environment variables
 
-### Example `.env.development`
+* `/static` 
+
+### Example `.env`
 
 ```env
 # Django Settings
@@ -117,7 +119,11 @@ EMAIL_HOST_PASSWORD=your-app-password
 
 ---
 
-## 5. Apply Database Migrations
+and run
+
+`python manage.py migrate`
+
+but if migrations is neccessary then;
 
 Run the following commands to prepare the database:
 
@@ -138,10 +144,20 @@ python manage.py createsuperuser
 
 Follow the prompts to set:
 
+* Username
 * Email
 * Password
 
 ---
+
+You can also seed the database with minimal data by running
+
+`python ./scripts/create_test_data.py`
+
+The script will create 
+- Admin
+- Subjects
+- Academic year
 
 ## 7. Run the Development Server
 
@@ -166,38 +182,6 @@ Swagger API Docs:
 ```
 http://127.0.0.1:8000/api/docs
 ```
-
----
-
-## 8. Running in Production
-
-1. Ensure `.env.production` is properly configured
-2. Set `DEBUG=False`
-3. Configure allowed hosts and security settings
-4. Run migrations:
-
-   ```bash
-   python manage.py migrate
-   ```
-5. Collect static files:
-
-   ```bash
-   python manage.py collectstatic
-   ```
-6. Use a production-grade server (e.g. Gunicorn + Nginx)
-
----
-
-## Common Commands Summary
-
-```bash
-python manage.py makemigrations
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver
-python manage.py collectstatic
-```
-
 ---
 
 ## Notes
