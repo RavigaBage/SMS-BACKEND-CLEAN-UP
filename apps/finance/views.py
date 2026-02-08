@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.filters import SearchFilter
 from django.db.models import Sum, Q, Count
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -22,6 +23,11 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
     queryset = FeeStructure.objects.select_related('academic_year', 'class_obj').all()
     serializer_class = FeeStructureSerializer
     permission_classes = [IsAuthenticated, CanManageFinance]
+
+    queryset = Expenditure.objects.all().order_by('-transaction_date')
+    serializer_class = ExpenditureSerializer
+    filter_backends = [SearchFilter]
+    search_fields = ['item_name', 'vendor_name', 'description']
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -167,30 +173,47 @@ class PaymentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by invoice
-        invoice_id = self.request.query_params.get('invoice_id', None)
-        if invoice_id:
-            queryset = queryset.filter(invoice_id=invoice_id)
-        
-        # Filter by student
-        student_id = self.request.query_params.get('student_id', None)
+
+        params = self.request.query_params
+
+        # 🔍 Search (student name, invoice number, payment number)
+        search = params.get("search")
+        if search:
+            
+            queryset = queryset.filter(
+                Q(invoice__student__first_name__icontains=search) |
+                Q(invoice__student__last_name__icontains=search) |
+                Q(invoice__invoice_number__icontains=search) |
+                Q(payment_number__icontains=search)
+            )
+
+        # 🎓 Filter by student
+        student_id = params.get("student_id")
         if student_id:
             queryset = queryset.filter(invoice__student_id=student_id)
-        
-        # Filter by payment method
-        payment_method = self.request.query_params.get('payment_method', None)
+
+        # 💳 Payment method
+        payment_method = params.get("payment_method")
         if payment_method:
             queryset = queryset.filter(payment_method=payment_method)
-        
-        # Filter by date range
-        start_date = self.request.query_params.get('start_date', None)
-        end_date = self.request.query_params.get('end_date', None)
+
+        # 📅 Month filter (YYYY-MM)
+        month = params.get("month")
+        if month:
+            year, month = month.split("-")
+            queryset = queryset.filter(
+                payment_date__year=year,
+                payment_date__month=month
+            )
+
+        # 📆 Date range
+        start_date = params.get("start_date")
+        end_date = params.get("end_date")
         if start_date and end_date:
-            queryset = queryset.filter(payment_date__range=[start_date, end_date])
-        
-        return queryset
-    
+            queryset = queryset.filter(payment_date__date__range=[start_date, end_date])
+
+        return queryset.order_by("-payment_date")
+
     def create(self, request, *args, **kwargs):
         """Record a payment"""
         serializer = self.get_serializer(data=request.data)

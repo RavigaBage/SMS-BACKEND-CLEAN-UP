@@ -1,6 +1,8 @@
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from .models import Student, Parent, StudentParent
+from apps.grades.models import Grade
+from apps.attendance.models import Attendance
 from apps.academic.models import Class, Enrollment
 from datetime import datetime
 
@@ -185,25 +187,27 @@ class StudentService:
         return new_enrollment
     
     @staticmethod
+    # apps/students/services.py
     def get_student_with_details(student_id):
-        """Get student with all related information"""
-        try:
-            student = Student.objects.prefetch_related(
+        # The error is happening right here in this prefetch_related call
+        return {
+            'student': Student.objects.prefetch_related(
                 'parent_links__parent',
-                'enrollments__class_obj',
-                'grades',
-                'attendance_records'
-            ).get(id=student_id)
+                'academic_grades',  # <--- CHANGE THIS from 'grades'
+                'enrollments',
+                'attendance_records' 
+            ).get(id=student_id),
             
-            return {
-                'student': student,
-                'parents': [link.parent for link in student.parent_links.all()],
-                'current_enrollment': student.enrollments.filter(status='active').first(),
-                'grades': student.grades.all(),
-                'attendance': student.attendance_records.all()
-            }
-        except Student.DoesNotExist:
-            raise ValidationError("Student not found")
+            'parents': Parent.objects.filter(student_links__student_id=student_id),
+            
+            'grades': Grade.objects.filter(student_id=student_id).order_by('-grade_date'),
+            
+            'attendance': Attendance.objects.filter(student_id=student_id).order_by('-created_at'),
+            'current_enrollment': Enrollment.objects.filter(
+                student_id=student_id, 
+                status='active'
+            ).first(),
+        }
     
     @staticmethod
     def search_students(query):
@@ -213,6 +217,15 @@ class StudentService:
             models.Q(last_name__icontains=query) |
             models.Q(admission_number__icontains=query)
         )
+    
+    def delete_student(self, student_id):
+        try:
+            student = Student.objects.get(id=student_id)
+            # You can add custom logic here, like archiving instead of deleting
+            student.delete()
+            return True
+        except Student.DoesNotExist:
+            raise Exception("Student not found")
 
 
 class ParentService:

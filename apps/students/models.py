@@ -41,6 +41,7 @@ class Student(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     admission_date = models.DateField()
     photo_url = models.URLField(blank=True, max_length=255)
+    class_obj = models.ForeignKey('class.Class', on_delete=models.SET_NULL, null=True, blank=True)
     
     created_by = models.ForeignKey(
         User,
@@ -51,6 +52,7 @@ class Student(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    class_obj =  models.ForeignKey('academic.Class', on_delete=models.SET_NULL, null=True, blank=True)
     
     class Meta:
         db_table = 'students'
@@ -77,6 +79,21 @@ class Student(models.Model):
         return today.year - self.date_of_birth.year - (
             (today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day)
         )
+    
+    @property
+    def class_info(self):
+        enrollment = self.enrollments.filter(status="active").select_related("class_obj").first()
+        if enrollment:
+            c = enrollment.class_obj
+            return {
+                "id": c.id,
+                "name": c.class_name,
+                "grade_level": c.grade_level,
+                "section": c.section,
+                "academic_year": c.academic_year.year_name
+            }
+        return None
+    
 
 
 class Parent(models.Model):

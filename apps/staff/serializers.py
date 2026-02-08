@@ -2,7 +2,6 @@ from rest_framework import serializers
 from .models import Staff, SalaryStructure, SalaryPayment, StaffAttendance, LeaveRequest
 from apps.accounts.serializers import UserSerializer
 
-
 class StaffSerializer(serializers.ModelSerializer):
     """Serializer for Staff model"""
     
@@ -10,7 +9,10 @@ class StaffSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     staff_type_display = serializers.CharField(source='get_staff_type_display', read_only=True)
     gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    assigned_subjects = serializers.SerializerMethodField()
     
+    managed_classes = serializers.SerializerMethodField()
+
     class Meta:
         model = Staff
         fields = [
@@ -18,9 +20,33 @@ class StaffSerializer(serializers.ModelSerializer):
             'date_of_birth', 'phone_number', 'email', 'address',
             'gender', 'gender_display', 'staff_type', 'staff_type_display',
             'specialization', 'employment_date', 'national_id',
-            'health_info', 'photo_url', 'created_at', 'updated_at'
+            'health_info', 'photo_url', 'created_at', 'updated_at','managed_classes','assigned_subjects'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    def get_assigned_subjects(self, obj):
+            """Returns subjects the staff is assigned to teach across different classes"""
+            assignments = obj.subject_assignments.select_related('class_obj', 'subject', 'class_obj__academic_year')
+            return [
+                {
+                    "id": a.id,
+                    "subject_name": a.subject.subject_name,
+                    "subject_code": a.subject.subject_code,
+                    "class_name": a.class_obj.class_name,
+                    "academic_year": a.class_obj.academic_year.year_name
+                } for a in assignments
+            ]
+
+    def get_managed_classes(self, obj):
+        """Returns classes where this staff is the main Class Teacher"""
+        from apps.academic.serializers import AssignedClassSerializer
+        try:
+            
+            if hasattr(obj.user, 'teacher_profile'): # Adjust based on your Teacher model's related_name
+                classes = obj.user.teacher_profile.assigned_classes.all()
+                return AssignedClassSerializer(classes, many=True).data
+        except Exception:
+            return []
+        return []
 
 
 class StaffCreateSerializer(serializers.Serializer):
@@ -140,3 +166,11 @@ class LeaveApprovalSerializer(serializers.Serializer):
     
     action = serializers.ChoiceField(choices=['approve', 'reject'])
     remarks = serializers.CharField(required=False, allow_blank=True)
+
+
+class StaffClassroomSerializer(serializers.Serializer):
+    """Simplified classroom serializer for nesting inside Staff"""
+    id = serializers.IntegerField(read_only=True)
+    name = serializers.CharField(read_only=True) # e.g., "Grade 10 - Math"
+    subject_name = serializers.CharField(read_only=True)
+    student_count = serializers.IntegerField(read_only=True)

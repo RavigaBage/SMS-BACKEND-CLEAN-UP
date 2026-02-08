@@ -17,13 +17,15 @@ from apps.academic.views import (
     AcademicYearViewSet, SubjectViewSet, ClassViewSet,
     EnrollmentViewSet, SubjectAssignmentViewSet
 )
-from apps.grades.views import GradeViewSet
+from apps.teachers.views import TeacherViewSet
+from apps.grades.views import GradeViewSet,TranscriptViewSet
 from apps.attendance.views import AttendanceViewSet
 from apps.finance.views import (
     FeeStructureViewSet, InvoiceViewSet, PaymentViewSet,
     ExpenditureViewSet, FinancialDashboardViewSet
 )
-from apps.timetable.views import TimetableViewSet
+from apps.timetable.views import TimetableViewSet,SyllabusViewSet
+from apps.summary.views import DashboardSummary
 
 # Create router
 router = routers.DefaultRouter()
@@ -44,6 +46,7 @@ router.register(r'classes', ClassViewSet, basename='class')
 router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
 router.register(r'subject-assignments', SubjectAssignmentViewSet, basename='subject-assignment')
 router.register(r'grades', GradeViewSet, basename='grade')
+router.register(r'transcripts',  TranscriptViewSet, basename='transcript')
 router.register(r'attendance', AttendanceViewSet, basename='attendance')
 router.register(r'fee-structures', FeeStructureViewSet, basename='fee-structure')
 router.register(r'invoices', InvoiceViewSet, basename='invoice')
@@ -51,8 +54,8 @@ router.register(r'payments', PaymentViewSet, basename='payment')
 router.register(r'expenditures', ExpenditureViewSet, basename='expenditure')
 router.register(r'financial-dashboard', FinancialDashboardViewSet, basename='financial-dashboard')
 router.register(r'timetable', TimetableViewSet, basename='timetable')
-# router.register(r'syllabus', SyllabusViewSet, basename='syllabus')
-
+router.register(r'syllabi', SyllabusViewSet, basename='syllabi')
+router.register(r'teachers', TeacherViewSet, basename='teacher')
 urlpatterns = [
     # Root endpoint
     path('', lambda r: JsonResponse({
@@ -79,8 +82,8 @@ urlpatterns = [
     path('auth/refresh', RefreshTokenView.as_view(), name='token-refresh'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     path('auth/me/', CurrentUserView.as_view(), name='current-user'),
-    
-    # API routes
+
+    path('api/dashboard-summary/', DashboardSummary.as_view(), name='dashboard-summary'),
     path('', include(router.urls)),
 ]
 

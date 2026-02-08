@@ -1,6 +1,7 @@
 from django.db import models
 from apps.staff.models import Staff
 from apps.students.models import Student
+from apps.teachers.models import Teacher
 
 
 class AcademicYear(models.Model):
@@ -38,7 +39,7 @@ class Class(models.Model):
     section = models.CharField(max_length=10, blank=True, help_text="A, B, C, etc.")
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name='classes')
     class_teacher = models.ForeignKey(
-        Staff,
+        Teacher,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

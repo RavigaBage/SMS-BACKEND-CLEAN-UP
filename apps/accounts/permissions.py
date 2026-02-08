@@ -58,16 +58,20 @@ class CanManageFinance(permissions.BasePermission):
 
 
 class CanManageStudents(permissions.BasePermission):
-    """Permission to manage students (admin, headmaster, teacher)"""
+    """Permission to manage students (superuser, admin, headmaster, teacher)"""
     
     def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+            
         return (
-            request.user and
-            request.user.is_authenticated and
-            request.user.role in [User.Role.ADMIN, User.Role.HEADMASTER, User.Role.TEACHER]
+            request.user.is_superuser or 
+            request.user.role in [
+                User.Role.ADMIN, 
+                User.Role.HEADMASTER, 
+                User.Role.TEACHER
+            ]
         )
-
-
 class CanManageGrades(permissions.BasePermission):
     """Permission to manage grades (admin, headmaster, teacher)"""
     

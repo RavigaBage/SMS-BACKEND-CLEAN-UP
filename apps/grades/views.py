@@ -2,235 +2,183 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Q, Sum, Avg
-from .models import Grade
-from .serializers import GradeSerializer, GradeCreateSerializer, StudentGradeReportSerializer
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
+from .models import Grade,Student,Class
+from .serializers import GradeSerializer, ClassStudentListSerializer,StudentTranscriptSerializer
 from apps.accounts.permissions import CanManageGrades
-
-
+from .Utils import AcademicReportGenerator
+# --------------------------
+# Grade ViewSet
+# --------------------------
 class GradeViewSet(viewsets.ModelViewSet):
-    """ViewSet for Grade management"""
-    
-    queryset = Grade.objects.select_related('student', 'subject', 'enrollment', 'entered_by').all()
-    permission_classes = [IsAuthenticated, CanManageGrades]
-    
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return GradeCreateSerializer
-        return GradeSerializer
-    
+    queryset = Grade.objects.select_related('student', 'subject', 'class_obj').all()
+    serializer_class = GradeSerializer
+    permission_classes = [IsAuthenticated]
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Teachers can only see grades for their assigned subjects
-        if self.request.user.role == 'teacher':
-            # Get teacher's subject assignments
-            from apps.academic.models import SubjectAssignment
-            teacher_subjects = SubjectAssignment.objects.filter(
-                teacher__user=self.request.user
-            ).values_list('subject_id', flat=True)
-            queryset = queryset.filter(subject_id__in=teacher_subjects)
-        
-        # Filter by student
-        student_id = self.request.query_params.get('student_id', None)
-        if student_id:
-            queryset = queryset.filter(student_id=student_id)
-        
-        # Filter by subject
-        subject_id = self.request.query_params.get('subject_id', None)
-        if subject_id:
-            queryset = queryset.filter(subject_id=subject_id)
-        
-        # Filter by term
-        term = self.request.query_params.get('term', None)
-        if term:
-            queryset = queryset.filter(term=term)
-        
-        # Filter by grade type
-        grade_type = self.request.query_params.get('grade_type', None)
-        if grade_type:
-            queryset = queryset.filter(grade_type=grade_type)
-        
-        # Filter by enrollment (class)
-        enrollment_id = self.request.query_params.get('enrollment_id', None)
-        if enrollment_id:
-            queryset = queryset.filter(enrollment_id=enrollment_id)
-        
+        if self.action == 'list':
+            class_id = self.request.query_params.get("class")
+            subject_id = self.request.query_params.get("subject")
+            academic_year = self.request.query_params.get("academic_year")
+            term = self.request.query_params.get("term")
+
+            if class_id:
+                queryset = queryset.filter(class_obj_id=class_id)
+            if subject_id:
+                queryset = queryset.filter(subject_id=subject_id)
+            if academic_year:
+                queryset = queryset.filter(academic_year=academic_year)
+            if term:
+                queryset = queryset.filter(term=term)
         return queryset
-    
-    def perform_create(self, serializer):
-        serializer.save(entered_by=self.request.user)
-    
-    @action(detail=False, methods=['post'])
-    def bulk_create(self, request):
-        """Create multiple grades at once"""
-        grades_data = request.data.get('grades', [])
-        
-        if not grades_data:
-            return Response(
-                {'error': 'grades array is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        created_grades = []
-        errors = []
-        
-        for grade_data in grades_data:
-            serializer = GradeCreateSerializer(data=grade_data)
-            if serializer.is_valid():
-                grade = Grade.objects.create(
-                    **serializer.validated_data,
-                    entered_by=request.user
-                )
-                created_grades.append(grade)
-            else:
-                errors.append({
-                    'data': grade_data,
-                    'errors': serializer.errors
-                })
-        
-        return Response({
-            'created': GradeSerializer(created_grades, many=True).data,
-            'errors': errors
-        }, status=status.HTTP_201_CREATED if created_grades else status.HTTP_400_BAD_REQUEST)
-    
-    @action(detail=False, methods=['get'])
-    def student_report(self, request):
-        """Get grade report for a student"""
-        student_id = request.query_params.get('student_id')
+
+    @action(detail=False, methods=['get', 'patch'], url_path='by-params')
+    @action(detail=False, methods=['get', 'patch'], url_path='by-params')
+    def get_by_params(self, request):
+        student_id = request.query_params.get('student')
+        class_id = request.query_params.get('class')
+        subject_id = request.query_params.get('subject')
+        academic_year = request.query_params.get('academic_year')
         term = request.query_params.get('term')
-        
-        if not student_id or not term:
+
+        if not all([student_id, class_id, subject_id, academic_year, term]):
             return Response(
-                {'error': 'student_id and term are required'},
-                status=status.HTTP_400_BAD_REQUEST
+                {"detail": "All parameters required: student, class, subject, academic_year, term"},
+                status=400
             )
-        
-        # Get all grades for student in the term
-        grades = Grade.objects.filter(
+
+        grade = get_object_or_404(
+            Grade,
             student_id=student_id,
-            term=term
-        ).select_related('subject')
-        
-        if not grades.exists():
-            return Response(
-                {'error': 'No grades found for this student and term'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Calculate totals
-        total_marks = sum(grade.marks for grade in grades)
-        total_max_marks = sum(grade.max_marks for grade in grades)
-        overall_percentage = (total_marks / total_max_marks * 100) if total_max_marks > 0 else 0
-        
-        from apps.students.models import Student
-        student = Student.objects.get(id=student_id)
-        
-        report_data = {
-            'student': student,
-            'term': term,
-            'grades': grades,
-            'total_marks': total_marks,
-            'total_max_marks': total_max_marks,
-            'overall_percentage': round(overall_percentage, 2)
-        }
-        
-        serializer = StudentGradeReportSerializer(report_data)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'])
-    def class_report(self, request):
-        """Get grade report for entire class"""
-        class_id = request.query_params.get('class_id')
-        subject_id = request.query_params.get('subject_id')
-        term = request.query_params.get('term')
-        
-        if not class_id or not subject_id or not term:
-            return Response(
-                {'error': 'class_id, subject_id, and term are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get all enrollments for the class
-        from apps.academic.models import Enrollment
-        enrollments = Enrollment.objects.filter(
             class_obj_id=class_id,
-            status='active'
-        ).values_list('id', flat=True)
-        
-        # Get grades for all students in this class for the subject and term
-        grades = Grade.objects.filter(
-            enrollment_id__in=enrollments,
             subject_id=subject_id,
+            academic_year=academic_year,
             term=term
-        ).select_related('student', 'subject')
-        
-        # Calculate class statistics
-        if grades.exists():
-            avg_percentage = sum(grade.percentage for grade in grades) / len(grades)
-            highest = max(grades, key=lambda g: g.percentage)
-            lowest = min(grades, key=lambda g: g.percentage)
+        )
+
+        if request.method == 'GET':
+            ranks = AcademicReportGenerator.get_subject_ranks_dict(class_id, academic_year)
             
-            return Response({
-                'class_id': class_id,
-                'subject_id': subject_id,
-                'term': term,
-                'total_students': len(grades),
-                'average_percentage': round(avg_percentage, 2),
-                'highest_score': {
-                    'student': highest.student.full_name,
-                    'marks': float(highest.marks),
-                    'percentage': float(highest.percentage)
-                },
-                'lowest_score': {
-                    'student': lowest.student.full_name,
-                    'marks': float(lowest.marks),
-                    'percentage': float(lowest.percentage)
-                },
-                'grades': GradeSerializer(grades, many=True).data
-            })
+            serializer = self.get_serializer(grade, context={'subject_ranks': ranks})
+            return Response(serializer.data)
+            
+        elif request.method == 'PATCH':
+            serializer = self.get_serializer(grade, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
         
-        return Response({'error': 'No grades found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=False, methods=['get'])
-    def subject_statistics(self, request):
-        """Get statistics for a subject across all classes"""
-        subject_id = request.query_params.get('subject_id')
-        term = request.query_params.get('term')
-        
-        if not subject_id or not term:
-            return Response(
-                {'error': 'subject_id and term are required'},
-                status=status.HTTP_400_BAD_REQUEST
+        # Pull parameters from the request
+        class_id = self.request.query_params.get("class")
+        academic_year = self.request.query_params.get("academic_year")
+
+        # If IDs are present, fetch the rank map and put it in context
+        if class_id and academic_year:
+            context['subject_ranks'] = AcademicReportGenerator.get_subject_ranks_dict(
+                class_id, academic_year
             )
-        
-        grades = Grade.objects.filter(subject_id=subject_id, term=term)
-        
-        if grades.exists():
-            total_students = grades.count()
-            avg_marks = grades.aggregate(Avg('marks'))['marks__avg']
             
-            # Grade distribution
-            a_plus = grades.filter(marks__gte=90).count()
-            a = grades.filter(marks__gte=80, marks__lt=90).count()
-            b = grades.filter(marks__gte=70, marks__lt=80).count()
-            c = grades.filter(marks__gte=60, marks__lt=70).count()
-            d = grades.filter(marks__gte=50, marks__lt=60).count()
-            f = grades.filter(marks__lt=50).count()
-            
+        return context
+# --------------------------
+# Transcript ViewSet
+# --------------------------
+class TranscriptViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_context(self):
+        return {
+            'academic_year': self.request.query_params.get('academic_year'),
+            'term': self.request.query_params.get('term')
+        }
+
+    def list(self, request):
+        class_name = request.query_params.get('class_name')
+        academic_year = request.query_params.get('academic_year')
+        search = request.query_params.get('search')
+        status_filter = request.query_params.get('status')
+
+        students = Student.objects.all()
+
+        if class_name:
+            students = students.filter(enrollments__class_obj__class_name=class_name)
+        if academic_year:
+            students = students.filter(enrollments__class_obj__academic_year=academic_year)
+        if search:
+            students = students.filter(
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(student_id__icontains=search)
+            )
+        if status_filter:
+            students = students.filter(status=status_filter)
+
+        students = students.distinct()
+
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+        start = (page - 1) * page_size
+        end = start + page_size
+        total_count = students.count()
+        students_page = students[start:end]
+
+        serializer = ClassStudentListSerializer(students_page, many=True)
+        return Response({
+            'count': total_count,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total_count + page_size - 1) // page_size,
+            'results': serializer.data
+        })
+
+    def retrieve(self, request, pk=None):
+        student = get_object_or_404(Student, pk=pk)
+        academic_year = request.query_params.get('academic_year')
+        term = request.query_params.get('term')
+        serializer = StudentTranscriptSerializer(student, context={'academic_year': academic_year, 'term': term})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def download_pdf(self, request, pk=None):
+        student = get_object_or_404(Student, pk=pk)
+        return Response({
+            'message': 'PDF generation endpoint',
+            'student_id': student.student_id,
+            'student_name': f"{student.first_name} {student.last_name}"
+        })
+
+    @action(detail=False, methods=['get'])
+    def class_summary(self, request):
+        class_name = request.query_params.get('class_name', 'Grade 10-B')
+        academic_year = request.query_params.get('academic_year', '2025/26')
+        try:
+            class_obj = Class.objects.get(class_name=class_name, academic_year=academic_year)
+            total_students = class_obj.enrollments.count()
+            active_students = class_obj.enrollments.filter(student__status='active').count()
+            students_on_leave = class_obj.enrollments.filter(student__status='on_leave').count()
             return Response({
-                'subject_id': subject_id,
-                'term': term,
                 'total_students': total_students,
-                'average_marks': round(float(avg_marks), 2),
-                'grade_distribution': {
-                    'A+': a_plus,
-                    'A': a,
-                    'B': b,
-                    'C': c,
-                    'D': d,
-                    'F': f
-                }
+                'active_students': active_students,
+                'students_on_leave': students_on_leave,
+                'academic_year': academic_year
             })
-        
-        return Response({'error': 'No grades found'}, status=status.HTTP_404_NOT_FOUND)
+        except Class.DoesNotExist:
+            return Response({
+                'total_students': 0,
+                'active_students': 0,
+                'students_on_leave': 0,
+                'academic_year': academic_year
+            })
+
+    @action(detail=False, methods=['get'])
+    def available_classes(self, request):
+        classes = Class.objects.values('id', 'class_name', 'academic_year').distinct()
+        return Response(list(classes))
+
+    @action(detail=False, methods=['get'])
+    def available_years(self, request):
+        years = Class.objects.values_list('academic_year', flat=True).distinct().order_by('-academic_year')
+        return Response(list(years))

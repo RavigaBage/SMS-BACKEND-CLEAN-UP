@@ -200,7 +200,7 @@ class Expenditure(models.Model):
     category = models.CharField(max_length=20, choices=Category.choices)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     vendor_name = models.CharField(max_length=255, blank=True)
-    transaction_date = models.DateField()
+    transaction_date = transaction_date = models.DateField(null=True, blank=True)
     payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, blank=True)
     description = models.TextField(blank=True)
     receipt_url = models.URLField(blank=True, max_length=255)

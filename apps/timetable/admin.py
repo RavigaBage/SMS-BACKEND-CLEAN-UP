@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Timetable 
+from .models import Timetable, Syllabus
 
 @admin.register(Timetable)
 class TimetableAdmin(admin.ModelAdmin):
@@ -9,10 +9,10 @@ class TimetableAdmin(admin.ModelAdmin):
     ordering = ('class_obj', 'day_of_week', 'start_time')
 
 
-# @admin.register(Syllabus)
-# class SyllabusAdmin(admin.ModelAdmin):
-#     list_display = ('week_number', 'subject', 'teacher', 'topic_title')
-#     list_filter = ('subject', 'teacher')
-#     search_fields = ('topic_title', 'subject__subject_name', 'teacher__user__username')
-#     ordering = ('subject', 'week_number')
+@admin.register(Syllabus)
+class SyllabusAdmin(admin.ModelAdmin):
+    list_display = ('week_number', 'subject', 'teacher', 'topic_title')
+    list_filter = ('subject', 'teacher')
+    search_fields = ('topic_title', 'subject__subject_name', 'teacher__user__username')
+    ordering = ('subject', 'week_number')
 

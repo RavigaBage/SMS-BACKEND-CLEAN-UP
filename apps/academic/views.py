@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status,filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -143,11 +143,11 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     queryset = Enrollment.objects.select_related('student', 'class_obj').all()
     serializer_class = EnrollmentSerializer
     permission_classes = [IsAuthenticated, CanManageStudents]
-
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['student__first_name', 'student__last_name', 'student__middle_name']
+    
     def get_queryset(self):
         queryset = super().get_queryset()
-
-        # Filter by student
         student_id = self.request.query_params.get('student_id', None)
         if student_id:
             queryset = queryset.filter(student_id=student_id)

@@ -8,6 +8,7 @@ from .serializers import (
     StudentSerializer, StudentCreateSerializer, StudentUpdateSerializer,
     ParentSerializer, StudentParentSerializer, StudentDetailSerializer
 )
+from apps.grades.serializers import StudentMinimalSerializer,StudentTranscriptSerializer
 from .services import StudentService, ParentService
 from apps.accounts.permissions import CanManageStudents
 
@@ -26,22 +27,24 @@ class StudentViewSet(viewsets.ModelViewSet):
         elif self.action == 'retrieve':
             return StudentDetailSerializer
         return StudentSerializer
-    
+
+
     def get_queryset(self):
-        queryset = super().get_queryset()
-        
-        # Filter by status
-        status_filter = self.request.query_params.get('status', None)
+        queryset = Student.objects.select_related('class_obj') 
+            
+        class_id = self.request.query_params.get('class_id')
+        if class_id:
+            queryset = queryset.filter(class_obj_id=class_id)
+
+        status_filter = self.request.query_params.get('status')
         if status_filter:
             queryset = queryset.filter(status=status_filter)
-        
-        # Filter by gender
-        gender = self.request.query_params.get('gender', None)
+
+        gender = self.request.query_params.get('gender')
         if gender:
             queryset = queryset.filter(gender=gender)
-        
-        # Search
-        search = self.request.query_params.get('search', None)
+
+        search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
                 Q(first_name__icontains=search) |
@@ -49,9 +52,9 @@ class StudentViewSet(viewsets.ModelViewSet):
                 Q(middle_name__icontains=search) |
                 Q(admission_number__icontains=search)
             )
-        
+
         return queryset
-    
+
     def create(self, request, *args, **kwargs):
         """Register a new student"""
         serializer = self.get_serializer(data=request.data)
@@ -78,9 +81,10 @@ class StudentViewSet(viewsets.ModelViewSet):
         parent_data_list = serializer.validated_data.get('parents', [])
         
         # Class enrollment
+        # We just grab the ID; the Service handles the logic!
         class_id = serializer.validated_data.get('class_id')
         
-        # Register student
+        # Register student using Service Layer
         service = StudentService()
         try:
             result = service.register_student(
@@ -94,7 +98,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             return Response(response_data, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
+        
     def update(self, request, *args, **kwargs):
         """Update student information"""
         partial = kwargs.pop('partial', False)
@@ -145,39 +149,59 @@ class StudentViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['get'])
     def full_details(self, request, pk=None):
-        """Get full student details with parents, grades, attendance"""
+        """Get full student details with parents, grades, and academic summary"""
         student = self.get_object()
         
         service = StudentService()
         try:
             details = service.get_student_with_details(student.id)
             
-            from apps.grades.serializers import GradeSerializer
+            transcript_serializer = StudentTranscriptSerializer(details['student'])
+            
             from apps.attendance.serializers import AttendanceSerializer
-            from apps.academic.serializers import EnrollmentSerializer
             
             return Response({
-                'student': StudentSerializer(details['student']).data,
-                'parents': ParentSerializer(details['parents'], many=True).data,
-                'current_enrollment': EnrollmentSerializer(details['current_enrollment']).data if details['current_enrollment'] else None,
-                'recent_grades': GradeSerializer(details['grades'][:10], many=True).data,
-                'recent_attendance': AttendanceSerializer(details['attendance'][:30], many=True).data,
+                "status": "success",
+                "data": {
+                    'student': StudentDetailSerializer(details['student']).data,
+                    'parents': ParentSerializer(details['parents'], many=True).data,
+                    'academic_record': transcript_serializer.data, 
+                    'recent_attendance': AttendanceSerializer(details['attendance'][:30], many=True).data,
+                    'current_enrollment': details['current_enrollment'].class_obj.class_name if details['current_enrollment'] else "Not Enrolled"
+                }
             })
         except Exception as e:
+            import traceback
+            print(traceback.format_exc()) 
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    def destroy(self, request, *args, **kwargs):
+            """Delete a student record using the Service Layer"""
+            instance = self.get_object()
+            service = StudentService()
+            
+            try:
+                service.delete_student(instance.id)
+                return Response(
+                    {"message": "Student deleted successfully"}, 
+                    status=status.HTTP_204_NO_CONTENT
+                )
+            except Exception as e:
+                return Response(
+                    {'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
 
 
 class ParentViewSet(viewsets.ModelViewSet):
     """ViewSet for Parent management"""
-    
     queryset = Parent.objects.all()
     serializer_class = ParentSerializer
     permission_classes = [IsAuthenticated, CanManageStudents]
-    
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().distinct()
         
-        # Search
+        # 1. Search Logic (Same as before)
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -186,21 +210,36 @@ class ParentViewSet(viewsets.ModelViewSet):
                 Q(phone_number__icontains=search) |
                 Q(email__icontains=search)
             )
+
+        # 2. Filter by Class (Updated Path)
+        # Path: Parent -> student_links -> student -> enrollments -> class_obj
+        class_id = self.request.query_params.get('class_id', None)
+        if class_id:
+            queryset = queryset.filter(
+                student_links__student__enrollments__class_obj_id=class_id,
+                student_links__student__enrollments__status="active" # Only active students in that class
+            )
+
+        # 3. Filter by Academic Year (Updated Path)
+        # Path: Parent -> student_links -> student -> enrollments -> class_obj -> academic_year
+        year_id = self.request.query_params.get('academic_year_id', None)
+        if year_id:
+            queryset = queryset.filter(
+                student_links__student__enrollments__class_obj__academic_year_id=year_id,
+                student_links__student__enrollments__status="active"
+            )
         
         return queryset
-    
     @action(detail=True, methods=['get'])
     def children(self, request, pk=None):
         """Get all children linked to a parent"""
         parent = self.get_object()
-        
         service = ParentService()
         try:
             children = service.get_parent_children(parent.id)
             return Response(StudentSerializer(children, many=True).data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
 
 class StudentParentViewSet(viewsets.ModelViewSet):
     """ViewSet for StudentParent relationship management"""

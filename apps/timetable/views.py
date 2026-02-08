@@ -2,9 +2,14 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import filters
+
 from .models import Timetable
 from .serializers import TimetableSerializer
 from apps.accounts.permissions import IsAdminOrHeadmaster
+from django_filters.rest_framework import DjangoFilterBackend
+from .models import Syllabus
+from .serializers import SyllabusSerializer, SyllabusListSerializer
 
 
 class TimetableViewSet(viewsets.ModelViewSet):
@@ -145,3 +150,104 @@ class TimetableViewSet(viewsets.ModelViewSet):
             'has_conflicts': len(conflicts) > 0,
             'conflicts': conflicts
         })
+
+
+
+class SyllabusViewSet(viewsets.ModelViewSet):
+
+    queryset = Syllabus.objects.all().select_related('subject', 'teacher', 'class_obj')
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['subject', 'teacher', 'class_obj', 'week_number']
+    search_fields = ['topic_title', 'content_summary', 'learning_objectives']
+    ordering_fields = ['week_number', 'topic_title']
+    ordering = ['week_number']  # Default ordering
+
+    def get_serializer_class(self):
+        """Use different serializers for list vs detail views"""
+        if self.action == 'list':
+            return SyllabusListSerializer
+        return SyllabusSerializer
+
+    @action(detail=False, methods=['get'], url_path='by-subject/(?P<subject_id>[^/.]+)')
+    def by_subject(self, request, subject_id=None):
+        """Get all syllabi for a specific subject"""
+        syllabi = self.queryset.filter(subject_id=subject_id)
+        serializer = self.get_serializer(syllabi, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='by-teacher/(?P<teacher_id>[^/.]+)')
+    def by_teacher(self, request, teacher_id=None):
+        """Get all syllabi for a specific teacher"""
+        syllabi = self.queryset.filter(teacher_id=teacher_id)
+        serializer = self.get_serializer(syllabi, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='by-class/(?P<class_id>[^/.]+)')
+    def by_class(self, request, class_id=None):
+        """Get all syllabi for a specific class"""
+        syllabi = self.queryset.filter(class_obj_id=class_id)
+        serializer = self.get_serializer(syllabi, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def weekly_overview(self, request):
+        """
+        Get syllabi grouped by week number
+        Query params: subject_id, teacher_id, class_id (all optional)
+        """
+        queryset = self.queryset
+        
+        # Apply filters from query params
+        subject_id = request.query_params.get('subject_id')
+        teacher_id = request.query_params.get('teacher_id')
+        class_id = request.query_params.get('class_id')
+        
+        if subject_id:
+            queryset = queryset.filter(subject_id=subject_id)
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+        if class_id:
+            queryset = queryset.filter(class_obj_id=class_id)
+        
+        # Group by week
+        weeks = {}
+        for syllabus in queryset:
+            week = syllabus.week_number
+            if week not in weeks:
+                weeks[week] = []
+            weeks[week].append(SyllabusSerializer(syllabus).data)
+        
+        return Response({
+            'weeks': weeks,
+            'total_weeks': len(weeks),
+        })
+
+
+# Alternative: Function-based views if you prefer
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['GET'])
+def get_syllabus_by_params(request):
+    """
+    Get syllabus filtered by query parameters
+    Example: /api/syllabus/filter/?subject=1&teacher=2&week_number=3
+    """
+    subject_id = request.query_params.get('subject')
+    teacher_id = request.query_params.get('teacher')
+    class_id = request.query_params.get('class')
+    week_number = request.query_params.get('week_number')
+    
+    queryset = Syllabus.objects.all()
+    
+    if subject_id:
+        queryset = queryset.filter(subject_id=subject_id)
+    if teacher_id:
+        queryset = queryset.filter(teacher_id=teacher_id)
+    if class_id:
+        queryset = queryset.filter(class_obj_id=class_id)
+    if week_number:
+        queryset = queryset.filter(week_number=week_number)
+    
+    serializer = SyllabusSerializer(queryset, many=True)
+    return Response(serializer.data)

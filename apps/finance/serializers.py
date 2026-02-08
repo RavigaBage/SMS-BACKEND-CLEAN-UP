@@ -2,7 +2,10 @@ from rest_framework import serializers
 from .models import FeeStructure, Invoice, InvoiceItem, Payment, Expenditure
 from apps.students.serializers import StudentSerializer
 from apps.academic.serializers import AcademicYearSerializer, ClassSerializer
+from django.apps import apps
 
+
+Class = apps.get_model('academic', 'Class')
 
 class FeeStructureSerializer(serializers.ModelSerializer):
     """Serializer for FeeStructure model"""
@@ -10,17 +13,23 @@ class FeeStructureSerializer(serializers.ModelSerializer):
     academic_year = AcademicYearSerializer(read_only=True)
     academic_year_id = serializers.IntegerField(write_only=True)
     class_obj = ClassSerializer(read_only=True)
-    class_id = serializers.IntegerField(write_only=True, required=False, allow_null=True, source='class_obj')
     frequency_display = serializers.CharField(source='get_frequency_display', read_only=True)
     term_display = serializers.CharField(source='get_term_display', read_only=True)
+    class_obj_id = serializers.PrimaryKeyRelatedField(
+        queryset=Class.objects.all(),
+        source="class_obj",
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
     
     class Meta:
         model = FeeStructure
         fields = [
             'id', 'academic_year', 'academic_year_id',
-            'class_obj', 'class_id', 'category_name', 'amount',
+            'class_obj',  'category_name', 'amount',
             'frequency', 'frequency_display', 'term', 'term_display',
-            'is_mandatory'
+            'is_mandatory','class_obj_id'
         ]
         read_only_fields = ['id']
 
@@ -95,17 +104,16 @@ class ExpenditureSerializer(serializers.ModelSerializer):
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
     approved_by_username = serializers.CharField(source='approved_by.username', read_only=True, allow_null=True)
     processed_by_username = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
-    
+    staff_name = serializers.CharField(source='processed_by.get_full_name', read_only=True)
+    date = serializers.DateField(source='transaction_date', read_only=True)
+
     class Meta:
         model = Expenditure
         fields = [
             'id', 'expenditure_number', 'item_name', 'category', 'category_display',
-            'amount', 'vendor_name', 'transaction_date',
-            'payment_method', 'payment_method_display', 'description', 'receipt_url',
-            'approved_by', 'approved_by_username',
-            'processed_by', 'processed_by_username', 'created_at'
+            'amount', 'vendor_name', 'date', 'staff_name', 'description', 
+            'receipt_url', 'created_at','approved_by_username','processed_by_username','payment_method_display'
         ]
-        read_only_fields = ['id', 'expenditure_number', 'created_at']
 
 
 class FinancialSummarySerializer(serializers.Serializer):

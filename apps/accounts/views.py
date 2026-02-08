@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from django.contrib.auth import authenticate
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
 from .models import User
 from .serializers import (
@@ -152,7 +153,33 @@ class UserViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
         
+        # Search by username, email, first_name, or last_name
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(username__icontains=search) |
+                Q(email__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search)
+            )
+        
         return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """Create a new user"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Set password and created_by
+        user = serializer.save()
+        user.set_password(request.data.get('password'))
+        user.created_by = request.user
+        user.save()
+        
+        return Response(
+            UserSerializer(user).data,
+            status=status.HTTP_201_CREATED
+        )
     
     @extend_schema(
         request=ChangePasswordSerializer,

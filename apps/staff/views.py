@@ -14,54 +14,39 @@ from apps.accounts.permissions import CanManageStaff, IsAdminOrHeadmaster
 
 
 class StaffViewSet(viewsets.ModelViewSet):
-    """ViewSet for Staff management"""
-    
-    queryset = Staff.objects.select_related('user').all()
-    permission_classes = [IsAuthenticated]
-    
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return StaffCreateSerializer
-        elif self.action in ['update', 'partial_update']:
-            return StaffUpdateSerializer
-        return StaffSerializer
-    
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy', 'deactivate']:
-            return [IsAuthenticated(), CanManageStaff()]
-        return [IsAuthenticated()]
-    
+    serializer_class = StaffSerializer
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = Staff.objects.all().select_related('user')
         
-        # Filter by staff type
-        staff_type = self.request.query_params.get('staff_type', None)
-        if staff_type:
-            queryset = queryset.filter(staff_type=staff_type)
+        role = self.request.query_params.get('role')
+        department = self.request.query_params.get('department')
+        status_param = self.request.query_params.get('status')
+        search = self.request.query_params.get('search')
         
-        # Filter by active status
-        is_active = self.request.query_params.get('is_active', None)
-        if is_active is not None:
-            queryset = queryset.filter(user__is_active=is_active.lower() == 'true')
+        if role:
+            queryset = queryset.filter(staff_type__icontains=role)
         
-        # Search
-        search = self.request.query_params.get('search', None)
+        if department:
+            queryset = queryset.filter(department__icontains=department)
+        
+        if status_param:
+            queryset = queryset.filter(status__iexact=status_param)
+        
         if search:
             queryset = queryset.filter(
                 Q(first_name__icontains=search) |
                 Q(last_name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(phone_number__icontains=search)
+                Q(email__icontains=search)
             )
         
         return queryset
-    
+
     def create(self, request, *args, **kwargs):
         """Create staff with user account"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Prepare data for service
         staff_data = {
             'first_name': serializer.validated_data['first_name'],
             'last_name': serializer.validated_data['last_name'],
@@ -266,10 +251,29 @@ class StaffAttendanceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by staff
+        # Filter by staff ID
         staff_id = self.request.query_params.get('staff_id', None)
         if staff_id:
             queryset = queryset.filter(staff_id=staff_id)
+        
+        # Filter by role/staff type
+        role = self.request.query_params.get('role', None)
+        if role:
+            queryset = queryset.filter(staff__staff_type__icontains=role)
+        
+        # Filter by search (staff name)
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(staff__first_name__icontains=search) |
+                Q(staff__last_name__icontains=search) |
+                Q(staff__email__icontains=search)
+            )
+        
+        # Filter by specific date
+        date = self.request.query_params.get('date', None)
+        if date:
+            queryset = queryset.filter(attendance_date=date)
         
         # Filter by date range
         start_date = self.request.query_params.get('start_date', None)
@@ -277,10 +281,10 @@ class StaffAttendanceViewSet(viewsets.ModelViewSet):
         if start_date and end_date:
             queryset = queryset.filter(attendance_date__range=[start_date, end_date])
         
-        # Filter by date
-        date = self.request.query_params.get('date', None)
-        if date:
-            queryset = queryset.filter(attendance_date=date)
+        # Filter by status
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
         
         return queryset
 
