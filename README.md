@@ -112,7 +112,55 @@ EMAIL_PORT=587
 EMAIL_USE_TLS=True
 EMAIL_HOST_USER=your-email@gmail.com
 EMAIL_HOST_PASSWORD=your-app-password
+
+# Superuser Credentials (IMPORTANT!)
+DJANGO_SUPERUSER_USERNAME=admin
+DJANGO_SUPERUSER_EMAIL=admin@yourschool.com
+DJANGO_SUPERUSER_PASSWORD=YourSecurePassword123!
+DJANGO_SUPERUSER_ROLE=admin
+
 ```
+
+
+
+
+## 👤 Creating Default Superuser
+
+### Method 1: Using Custom Management Command (Recommended)
+
+The project includes a custom management command that automatically creates a superuser if one doesn't exist.
+
+```bash
+python manage.py create_superuser
+```
+
+**What this does:**
+- Checks if a superuser with the specified username exists
+- Creates one if it doesn't exist
+- Uses environment variables for credentials
+- Assigns the ADMIN role automatically
+- Safe to run multiple times (won't create duplicates)
+
+### Method 2: Using Django's Built-in Command
+
+If environment variables are set, you can also use:
+
+```bash
+python manage.py createsuperuser --noinput
+```
+
+### Method 3: Interactive Creation (Development Only)
+
+For local development, you can create a superuser interactively:
+
+```bash
+python manage.py createsuperuser
+```
+
+Then follow the prompts to enter username, email, password, and role.
+
+---
+
 
 > ⚠️ **Never commit `.env` files to version control.**
 > Ensure they are listed in `.gitignore`.
