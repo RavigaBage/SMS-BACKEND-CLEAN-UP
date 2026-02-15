@@ -3,14 +3,19 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
-from .models import Student, Parent, StudentParent
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
+from .models import Student, Parent, StudentParent, StudentAttendance
 from .serializers import (
     StudentSerializer, StudentCreateSerializer, StudentUpdateSerializer,
-    ParentSerializer, StudentParentSerializer, StudentDetailSerializer
+    ParentSerializer, StudentParentSerializer, StudentDetailSerializer, StudentAttendanceSerializer
 )
-from apps.grades.serializers import StudentMinimalSerializer,StudentTranscriptSerializer
+from apps.grades.serializers import StudentMinimalSerializer, StudentTranscriptSerializer
 from .services import StudentService, ParentService
-from apps.accounts.permissions import CanManageStudents
+from apps.accounts.permissions import CanManageStudents, IsAdminOrHeadmaster
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -27,7 +32,6 @@ class StudentViewSet(viewsets.ModelViewSet):
         elif self.action == 'retrieve':
             return StudentDetailSerializer
         return StudentSerializer
-
 
     def get_queryset(self):
         queryset = Student.objects.select_related('class_obj') 
@@ -56,37 +60,36 @@ class StudentViewSet(viewsets.ModelViewSet):
         return queryset
 
     def create(self, request, *args, **kwargs):
-        """Register a new student"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        # Prepare student data
-        student_data = {
-            'admission_number': serializer.validated_data['admission_number'],
-            'first_name': serializer.validated_data['first_name'],
-            'last_name': serializer.validated_data['last_name'],
-            'middle_name': serializer.validated_data.get('middle_name', ''),
-            'date_of_birth': serializer.validated_data['date_of_birth'],
-            'gender': serializer.validated_data['gender'],
-            'address': serializer.validated_data.get('address', ''),
-            'nationality': serializer.validated_data.get('nationality', ''),
-            'religion': serializer.validated_data.get('religion', ''),
-            'blood_group': serializer.validated_data.get('blood_group', ''),
-            'medical_conditions': serializer.validated_data.get('medical_conditions', ''),
-            'admission_date': serializer.validated_data.get('admission_date'),
-            'photo_url': serializer.validated_data.get('photo_url', ''),
-        }
-        
-        # Parent data
-        parent_data_list = serializer.validated_data.get('parents', [])
-        
-        # Class enrollment
-        # We just grab the ID; the Service handles the logic!
-        class_id = serializer.validated_data.get('class_id')
-        
-        # Register student using Service Layer
-        service = StudentService()
+        """Register a new student with exception handling"""
         try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Prepare student data
+            student_data = {
+                'admission_number': serializer.validated_data['admission_number'],
+                'first_name': serializer.validated_data['first_name'],
+                'last_name': serializer.validated_data['last_name'],
+                'middle_name': serializer.validated_data.get('middle_name', ''),
+                'date_of_birth': serializer.validated_data['date_of_birth'],
+                'gender': serializer.validated_data['gender'],
+                'address': serializer.validated_data.get('address', ''),
+                'nationality': serializer.validated_data.get('nationality', ''),
+                'religion': serializer.validated_data.get('religion', ''),
+                'blood_group': serializer.validated_data.get('blood_group', ''),
+                'medical_conditions': serializer.validated_data.get('medical_conditions', ''),
+                'admission_date': serializer.validated_data.get('admission_date'),
+                'photo_url': serializer.validated_data.get('photo_url', ''),
+            }
+            
+            # Parent data
+            parent_data_list = serializer.validated_data.get('parents', [])
+            
+            # Class enrollment
+            class_id = serializer.validated_data.get('class_id')
+            
+            # Register student using Service Layer
+            service = StudentService()
             result = service.register_student(
                 student_data=student_data,
                 parent_data_list=parent_data_list,
@@ -96,64 +99,197 @@ class StudentViewSet(viewsets.ModelViewSet):
             
             response_data = StudentDetailSerializer(result['student']).data
             return Response(response_data, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        
-    def update(self, request, *args, **kwargs):
-        """Update student information"""
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        
-        service = StudentService()
-        try:
-            student = service.update_student(instance.id, serializer.validated_data)
-            return Response(StudentSerializer(student).data)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    @action(detail=True, methods=['post'])
-    def add_parent(self, request, pk=None):
-        """Add a parent to a student"""
-        student = self.get_object()
-        
-        parent_data = request.data
-        
-        service = StudentService()
-        try:
-            parent = service.add_parent_to_student(student.id, parent_data)
-            return Response(ParentSerializer(parent).data, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    @action(detail=True, methods=['post'])
-    def transfer_class(self, request, pk=None):
-        """Transfer student to a new class"""
-        student = self.get_object()
-        
-        new_class_id = request.data.get('class_id')
-        if not new_class_id:
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating student: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
             return Response(
-                {'error': 'class_id is required'},
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating student: {str(e)}")
+            error_detail = 'Admission number already exists or database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating student: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while registering the student.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        service = StudentService()
+    def update(self, request, *args, **kwargs):
+        """Update student information with exception handling"""
         try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            
+            service = StudentService()
+            student = service.update_student(instance.id, serializer.validated_data)
+            return Response(StudentSerializer(student).data)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error updating student: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error updating student: {str(e)}")
+            error_detail = 'Database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error updating student: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while updating the student.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def add_parent(self, request, pk=None):
+        """Add a parent to a student with exception handling"""
+        try:
+            student = self.get_object()
+            parent_data = request.data
+            
+            service = StudentService()
+            parent = service.add_parent_to_student(student.id, parent_data)
+            return Response(ParentSerializer(parent).data, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error adding parent to student {pk}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error adding parent to student {pk}: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while adding the parent.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def transfer_class(self, request, pk=None):
+        """Transfer student to a new class with exception handling"""
+        try:
+            student = self.get_object()
+            
+            new_class_id = request.data.get('class_id')
+            if not new_class_id:
+                error_detail = 'class_id is required'
+                return Response(
+                    {
+                        'error': f'Validation Error: {error_detail}',
+                        'detail': error_detail
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            service = StudentService()
             enrollment = service.transfer_student(student.id, new_class_id)
             from apps.academic.serializers import EnrollmentSerializer
             return Response(EnrollmentSerializer(enrollment).data)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error transferring student {pk}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error transferring student {pk}: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while transferring the student.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @action(detail=True, methods=['get'])
     def full_details(self, request, pk=None):
-        """Get full student details with parents, grades, and academic summary"""
-        student = self.get_object()
-        
-        service = StudentService()
+        """Get full student details with exception handling"""
         try:
+            student = self.get_object()
+            
+            service = StudentService()
             details = service.get_student_with_details(student.id)
             
             transcript_serializer = StudentTranscriptSerializer(details['student'])
@@ -170,27 +306,69 @@ class StudentViewSet(viewsets.ModelViewSet):
                     'current_enrollment': details['current_enrollment'].class_obj.class_name if details['current_enrollment'] else "Not Enrolled"
                 }
             })
+            
+        except Student.DoesNotExist:
+            logger.error(f"Student {pk} not found")
+            error_detail = f'Student with id {pk} not found.'
+            return Response(
+                {
+                    'error': f'Not Found: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
         except Exception as e:
-            import traceback
-            print(traceback.format_exc()) 
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error getting full details for student {pk}: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while retrieving student details.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     def destroy(self, request, *args, **kwargs):
-            """Delete a student record using the Service Layer"""
+        """Delete a student record with exception handling"""
+        try:
             instance = self.get_object()
             service = StudentService()
             
-            try:
-                service.delete_student(instance.id)
-                return Response(
-                    {"message": "Student deleted successfully"}, 
-                    status=status.HTTP_204_NO_CONTENT
-                )
-            except Exception as e:
-                return Response(
-                    {'error': str(e)}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
+            service.delete_student(instance.id)
+            return Response(
+                {"message": "Student deleted successfully"}, 
+                status=status.HTTP_204_NO_CONTENT
+            )
+            
+        except ValidationError as e:
+            logger.error(f"Validation error deleting student: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error deleting student: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while deleting the student.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class ParentViewSet(viewsets.ModelViewSet):
@@ -198,10 +376,11 @@ class ParentViewSet(viewsets.ModelViewSet):
     queryset = Parent.objects.all()
     serializer_class = ParentSerializer
     permission_classes = [IsAuthenticated, CanManageStudents]
+    
     def get_queryset(self):
         queryset = super().get_queryset().distinct()
         
-        # 1. Search Logic (Same as before)
+        # Search Logic
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -211,17 +390,15 @@ class ParentViewSet(viewsets.ModelViewSet):
                 Q(email__icontains=search)
             )
 
-        # 2. Filter by Class (Updated Path)
-        # Path: Parent -> student_links -> student -> enrollments -> class_obj
+        # Filter by Class
         class_id = self.request.query_params.get('class_id', None)
         if class_id:
             queryset = queryset.filter(
                 student_links__student__enrollments__class_obj_id=class_id,
-                student_links__student__enrollments__status="active" # Only active students in that class
+                student_links__student__enrollments__status="active"
             )
 
-        # 3. Filter by Academic Year (Updated Path)
-        # Path: Parent -> student_links -> student -> enrollments -> class_obj -> academic_year
+        # Filter by Academic Year
         year_id = self.request.query_params.get('academic_year_id', None)
         if year_id:
             queryset = queryset.filter(
@@ -230,16 +407,128 @@ class ParentViewSet(viewsets.ModelViewSet):
             )
         
         return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """Create parent with exception handling"""
+        try:
+            return super().create(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating parent: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating parent: {str(e)}")
+            error_detail = 'Parent with this email or phone already exists or database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating parent: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while creating the parent.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def update(self, request, *args, **kwargs):
+        """Update parent with exception handling"""
+        try:
+            return super().update(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error updating parent: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error updating parent: {str(e)}")
+            error_detail = 'Database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error updating parent: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while updating the parent.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=True, methods=['get'])
     def children(self, request, pk=None):
-        """Get all children linked to a parent"""
-        parent = self.get_object()
-        service = ParentService()
+        """Get all children linked to a parent with exception handling"""
         try:
+            parent = self.get_object()
+            service = ParentService()
             children = service.get_parent_children(parent.id)
             return Response(StudentSerializer(children, many=True).data)
+            
+        except Parent.DoesNotExist:
+            logger.error(f"Parent {pk} not found")
+            error_detail = f'Parent with id {pk} not found.'
+            return Response(
+                {
+                    'error': f'Not Found: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error getting children for parent {pk}: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while retrieving children.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
 
 class StudentParentViewSet(viewsets.ModelViewSet):
     """ViewSet for StudentParent relationship management"""
@@ -262,3 +551,180 @@ class StudentParentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(parent_id=parent_id)
         
         return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """Create student-parent relationship with exception handling"""
+        try:
+            return super().create(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating student-parent link: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating student-parent link: {str(e)}")
+            error_detail = 'This parent is already linked to this student or database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating student-parent link: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while creating the student-parent link.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentAttendanceViewSet(viewsets.ModelViewSet):
+    """ViewSet for StudentAttendance management"""
+    
+    queryset = StudentAttendance.objects.select_related('student').all()
+    serializer_class = StudentAttendanceSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by Student ID
+        student_id = self.request.query_params.get('student_id', None)
+        if student_id:
+            queryset = queryset.filter(student_id=student_id)
+        
+        # Filter by search (Student name)
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(student__first_name__icontains=search) |
+                Q(student__last_name__icontains=search)
+            )
+        
+        # Filter by specific date
+        date = self.request.query_params.get('date', None)
+        if date:
+            queryset = queryset.filter(attendance_date=date)
+        
+        # Filter by date range
+        start_date = self.request.query_params.get('start_date', None)
+        end_date = self.request.query_params.get('end_date', None)
+        if start_date and end_date:
+            queryset = queryset.filter(attendance_date__range=[start_date, end_date])
+        
+        # Filter by status
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """Create attendance with exception handling"""
+        try:
+            return super().create(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating attendance: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating attendance: {str(e)}")
+            error_detail = 'Attendance already exists for this student and date or database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating attendance: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while creating the attendance record.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def update(self, request, *args, **kwargs):
+        """Update attendance with exception handling"""
+        try:
+            return super().update(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error updating attendance: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error updating attendance: {str(e)}")
+            error_detail = 'Database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error updating attendance: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while updating the attendance record.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

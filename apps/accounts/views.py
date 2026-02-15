@@ -8,6 +8,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from django.contrib.auth import authenticate
 from django.db.models import Q
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
 from .models import User
 from .serializers import (
@@ -17,6 +19,9 @@ from .serializers import (
     ChangePasswordSerializer
 )
 from .permissions import IsAdminOrHeadmaster
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LoginView(TokenObtainPairView):
@@ -45,6 +50,51 @@ class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
     permission_classes = [AllowAny]
 
+    def post(self, request, *args, **kwargs):
+        """Login with exception handling"""
+        try:
+            return super().post(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error during login: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except InvalidToken as e:
+            logger.error(f"Invalid token during login: {str(e)}")
+            error_detail = 'Invalid credentials provided.'
+            return Response(
+                {
+                    'error': f'Authentication Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error during login: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred during login.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class RefreshTokenView(TokenRefreshView):
     """
@@ -63,6 +113,44 @@ class RefreshTokenView(TokenRefreshView):
     """
     serializer_class = CustomTokenRefreshSerializer
     permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        """Refresh token with exception handling"""
+        try:
+            return super().post(request, *args, **kwargs)
+            
+        except TokenError as e:
+            logger.error(f"Token error during refresh: {str(e)}")
+            error_detail = 'Invalid or expired refresh token.'
+            return Response(
+                {
+                    'error': f'Token Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+            
+        except InvalidToken as e:
+            logger.error(f"Invalid token during refresh: {str(e)}")
+            error_detail = 'Invalid refresh token provided.'
+            return Response(
+                {
+                    'error': f'Authentication Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error during token refresh: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while refreshing token.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class LogoutView(GenericAPIView):
@@ -88,8 +176,12 @@ class LogoutView(GenericAPIView):
         try:
             refresh_token = request.data.get("refresh")
             if not refresh_token:
+                error_detail = 'Refresh token is required'
                 return Response(
-                    {"error": "Refresh token is required"},
+                    {
+                        'error': f'Validation Error: {error_detail}',
+                        'detail': error_detail
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -100,14 +192,26 @@ class LogoutView(GenericAPIView):
                 {"message": "Successfully logged out"},
                 status=status.HTTP_200_OK
             )
-        except TokenError:
+            
+        except TokenError as e:
+            logger.error(f"Token error during logout: {str(e)}")
+            error_detail = 'Invalid or expired token'
             return Response(
-                {"error": "Invalid token"},
+                {
+                    'error': f'Token Error: {error_detail}',
+                    'detail': error_detail
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
+            
         except Exception as e:
+            logger.error(f"Unexpected error during logout: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred during logout.'
             return Response(
-                {"error": str(e)},
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -126,8 +230,20 @@ class CurrentUserView(GenericAPIView):
         description="Get current authenticated user information"
     )
     def get(self, request):
-        serializer = self.get_serializer(request.user)
-        return Response(serializer.data)
+        try:
+            serializer = self.get_serializer(request.user)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving current user: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while retrieving user information.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -166,20 +282,106 @@ class UserViewSet(viewsets.ModelViewSet):
         return queryset
     
     def create(self, request, *args, **kwargs):
-        """Create a new user"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        # Set password and created_by
-        user = serializer.save()
-        user.set_password(request.data.get('password'))
-        user.created_by = request.user
-        user.save()
-        
-        return Response(
-            UserSerializer(user).data,
-            status=status.HTTP_201_CREATED
-        )
+        """Create a new user with exception handling"""
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Set password and created_by
+            user = serializer.save()
+            user.set_password(request.data.get('password'))
+            user.created_by = request.user
+            user.save()
+            
+            return Response(
+                UserSerializer(user).data,
+                status=status.HTTP_201_CREATED
+            )
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating user: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating user: {str(e)}")
+            error_detail = 'Username or email already exists.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating user: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while creating the user.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def update(self, request, *args, **kwargs):
+        """Update user with exception handling"""
+        try:
+            return super().update(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error updating user: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error updating user: {str(e)}")
+            error_detail = 'Username or email already exists.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error updating user: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while updating the user.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(
         request=ChangePasswordSerializer,
@@ -192,20 +394,50 @@ class UserViewSet(viewsets.ModelViewSet):
         Admin/Headmaster changes user password
         No old password required - admin override
         """
-        user = self.get_object()
-        
-        serializer = ChangePasswordSerializer(data=request.data)
-        if serializer.is_valid():
-            # Admin can change any password without knowing old password
-            new_password = serializer.validated_data['new_password']
-            user.set_password(new_password)
-            user.save()
+        try:
+            user = self.get_object()
             
-            return Response({
-                'message': f'Password changed successfully for {user.username}. User must login with new password.'
-            })
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer = ChangePasswordSerializer(data=request.data)
+            if serializer.is_valid():
+                # Admin can change any password without knowing old password
+                new_password = serializer.validated_data['new_password']
+                user.set_password(new_password)
+                user.save()
+                
+                return Response({
+                    'message': f'Password changed successfully for {user.username}. User must login with new password.'
+                })
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error changing password for user {pk}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error changing password for user {pk}: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while changing the password.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(
         responses={200: OpenApiResponse(description="User deactivated successfully")},
@@ -214,19 +446,53 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrHeadmaster])
     def deactivate(self, request, pk=None):
         """Deactivate a user account"""
-        user = self.get_object()
-        
-        # Cannot deactivate yourself
-        if user == request.user:
+        try:
+            user = self.get_object()
+            
+            # Cannot deactivate yourself
+            if user == request.user:
+                error_detail = 'You cannot deactivate your own account'
+                return Response(
+                    {
+                        'error': f'Validation Error: {error_detail}',
+                        'detail': error_detail
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            user.is_active = False
+            user.save()
+            
+            return Response({'message': 'User deactivated successfully'})
+            
+        except ValidationError as e:
+            logger.error(f"Validation error deactivating user {pk}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
             return Response(
-                {'error': 'You cannot deactivate your own account'},
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        user.is_active = False
-        user.save()
-        
-        return Response({'message': 'User deactivated successfully'})
+            
+        except Exception as e:
+            logger.error(f"Unexpected error deactivating user {pk}: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while deactivating the user.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(
         responses={200: OpenApiResponse(description="User activated successfully")},
@@ -235,11 +501,41 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrHeadmaster])
     def activate(self, request, pk=None):
         """Activate a user account"""
-        user = self.get_object()
-        user.is_active = True
-        user.save()
-        
-        return Response({'message': 'User activated successfully'})
+        try:
+            user = self.get_object()
+            user.is_active = True
+            user.save()
+            
+            return Response({'message': 'User activated successfully'})
+            
+        except ValidationError as e:
+            logger.error(f"Validation error activating user {pk}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error activating user {pk}: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while activating the user.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # Health check
@@ -262,6 +558,7 @@ def health_check(request):
             'service': 'school-management-api'
         }, status=200)
     except Exception as e:
+        logger.error(f"Health check failed: {str(e)}", exc_info=True)
         return JsonResponse({
             'status': 'unhealthy',
             'error': str(e)

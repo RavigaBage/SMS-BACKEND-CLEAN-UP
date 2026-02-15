@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter
 from django.db.models import Sum, Q, Count
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from decimal import Decimal
 from datetime import datetime, timedelta
 from .models import FeeStructure, Invoice, InvoiceItem, Payment, Expenditure
@@ -15,6 +17,9 @@ from .serializers import (
 from .services import InvoiceService, PaymentService
 from apps.accounts.permissions import CanManageFinance
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FeeStructureViewSet(viewsets.ModelViewSet):
@@ -23,11 +28,6 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
     queryset = FeeStructure.objects.select_related('academic_year', 'class_obj').all()
     serializer_class = FeeStructureSerializer
     permission_classes = [IsAuthenticated, CanManageFinance]
-
-    queryset = Expenditure.objects.all().order_by('-transaction_date')
-    serializer_class = ExpenditureSerializer
-    filter_backends = [SearchFilter]
-    search_fields = ['item_name', 'vendor_name', 'description']
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -48,6 +48,96 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(Q(term=term) | Q(term='all'))
         
         return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """Create fee structure with exception handling"""
+        try:
+            return super().create(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating fee structure: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating fee structure: {str(e)}")
+            error_detail = 'Fee structure already exists for this class and term or database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating fee structure: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while creating the fee structure.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def update(self, request, *args, **kwargs):
+        """Update fee structure with exception handling"""
+        try:
+            return super().update(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error updating fee structure: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error updating fee structure: {str(e)}")
+            error_detail = 'Database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error updating fee structure: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while updating the fee structure.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
@@ -93,19 +183,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def generate(self, request):
         """Generate invoice for a student"""
-        student_id = request.data.get('student_id')
-        academic_year_id = request.data.get('academic_year_id')
-        term = request.data.get('term')
-        due_days = request.data.get('due_days', 30)
-        
-        if not all([student_id, academic_year_id, term]):
-            return Response(
-                {'error': 'student_id, academic_year_id, and term are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        service = InvoiceService()
         try:
+            student_id = request.data.get('student_id')
+            academic_year_id = request.data.get('academic_year_id')
+            term = request.data.get('term')
+            due_days = request.data.get('due_days', 30)
+            
+            if not all([student_id, academic_year_id, term]):
+                error_detail = 'student_id, academic_year_id, and term are required'
+                return Response(
+                    {
+                        'error': f'Validation Error: {error_detail}',
+                        'detail': error_detail
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            service = InvoiceService()
             invoice = service.generate_invoice_for_student(
                 student_id=student_id,
                 academic_year_id=academic_year_id,
@@ -116,24 +210,55 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             
             serializer = InvoiceSerializer(invoice)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error generating invoice: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error generating invoice: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while generating the invoice.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @action(detail=False, methods=['post'])
     def bulk_generate(self, request):
         """Generate invoices for all students in a class"""
-        class_id = request.data.get('class_id')
-        academic_year_id = request.data.get('academic_year_id')
-        term = request.data.get('term')
-        
-        if not all([class_id, academic_year_id, term]):
-            return Response(
-                {'error': 'class_id, academic_year_id, and term are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        service = InvoiceService()
         try:
+            class_id = request.data.get('class_id')
+            academic_year_id = request.data.get('academic_year_id')
+            term = request.data.get('term')
+            
+            if not all([class_id, academic_year_id, term]):
+                error_detail = 'class_id, academic_year_id, and term are required'
+                return Response(
+                    {
+                        'error': f'Validation Error: {error_detail}',
+                        'detail': error_detail
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            service = InvoiceService()
             result = service.generate_bulk_invoices(
                 class_id=class_id,
                 academic_year_id=academic_year_id,
@@ -147,17 +272,56 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'invoices': InvoiceSerializer(result['invoices'], many=True).data,
                 'error_details': result['errors']
             }, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error bulk generating invoices: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error bulk generating invoices: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while bulk generating invoices.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @action(detail=True, methods=['get'])
     def payment_history(self, request, pk=None):
         """Get payment history for an invoice"""
-        invoice = self.get_object()
-        service = PaymentService()
-        payments = service.get_payment_history(invoice.id)
-        serializer = PaymentSerializer(payments, many=True)
-        return Response(serializer.data)
+        try:
+            invoice = self.get_object()
+            service = PaymentService()
+            payments = service.get_payment_history(invoice.id)
+            serializer = PaymentSerializer(payments, many=True)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving payment history for invoice {pk}: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while retrieving payment history.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -173,13 +337,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-
         params = self.request.query_params
 
-        # 🔍 Search (student name, invoice number, payment number)
+        # Search (student name, invoice number, payment number)
         search = params.get("search")
         if search:
-            
             queryset = queryset.filter(
                 Q(invoice__student__first_name__icontains=search) |
                 Q(invoice__student__last_name__icontains=search) |
@@ -187,17 +349,17 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 Q(payment_number__icontains=search)
             )
 
-        # 🎓 Filter by student
+        # Filter by student
         student_id = params.get("student_id")
         if student_id:
             queryset = queryset.filter(invoice__student_id=student_id)
 
-        # 💳 Payment method
+        # Payment method
         payment_method = params.get("payment_method")
         if payment_method:
             queryset = queryset.filter(payment_method=payment_method)
 
-        # 📅 Month filter (YYYY-MM)
+        # Month filter (YYYY-MM)
         month = params.get("month")
         if month:
             year, month = month.split("-")
@@ -206,7 +368,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 payment_date__month=month
             )
 
-        # 📆 Date range
+        # Date range
         start_date = params.get("start_date")
         end_date = params.get("end_date")
         if start_date and end_date:
@@ -215,12 +377,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return queryset.order_by("-payment_date")
 
     def create(self, request, *args, **kwargs):
-        """Record a payment"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        service = PaymentService()
+        """Record a payment with exception handling"""
         try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            service = PaymentService()
             payment = service.record_payment(
                 invoice_id=serializer.validated_data['invoice_id'],
                 amount_paid=serializer.validated_data['amount_paid'],
@@ -231,30 +393,80 @@ class PaymentViewSet(viewsets.ModelViewSet):
             
             response_serializer = PaymentSerializer(payment)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error recording payment: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error recording payment: {str(e)}")
+            error_detail = 'Database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error recording payment: {str(e)}", exc_info=True)
+            error_detail = str(e) if str(e) else 'An unexpected error occurred while recording the payment.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @action(detail=False, methods=['get'])
     def daily_collection(self, request):
         """Get daily collection summary"""
-        date = request.query_params.get('date', datetime.now().date())
-        
-        payments = Payment.objects.filter(
-            payment_date__date=date
-        )
-        
-        total_collection = payments.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
-        payment_methods = payments.values('payment_method').annotate(
-            count=Count('id'),
-            total=Sum('amount_paid')
-        )
-        
-        return Response({
-            'date': date,
-            'total_collection': total_collection,
-            'total_transactions': payments.count(),
-            'by_payment_method': list(payment_methods)
-        })
+        try:
+            date = request.query_params.get('date', datetime.now().date())
+            
+            payments = Payment.objects.filter(
+                payment_date__date=date
+            )
+            
+            total_collection = payments.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+            payment_methods = payments.values('payment_method').annotate(
+                count=Count('id'),
+                total=Sum('amount_paid')
+            )
+            
+            return Response({
+                'date': date,
+                'total_collection': total_collection,
+                'total_transactions': payments.count(),
+                'by_payment_method': list(payment_methods)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error retrieving daily collection: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while retrieving daily collection.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ExpenditureViewSet(viewsets.ModelViewSet):
@@ -263,6 +475,8 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
     queryset = Expenditure.objects.select_related('approved_by', 'processed_by').all()
     serializer_class = ExpenditureSerializer
     permission_classes = [IsAuthenticated, CanManageFinance]
+    filter_backends = [SearchFilter]
+    search_fields = ['item_name', 'vendor_name', 'description']
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -278,7 +492,52 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
         if start_date and end_date:
             queryset = queryset.filter(transaction_date__range=[start_date, end_date])
         
-        return queryset
+        return queryset.order_by('-transaction_date')
+    
+    def create(self, request, *args, **kwargs):
+        """Create expenditure with exception handling"""
+        try:
+            return super().create(request, *args, **kwargs)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating expenditure: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_detail = e.messages[0] if e.messages else str(e)
+            else:
+                error_detail = str(e)
+            
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating expenditure: {str(e)}")
+            error_detail = 'Database constraint violated.'
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error creating expenditure: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while creating the expenditure.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def perform_create(self, serializer):
         # Generate expenditure number
@@ -305,33 +564,46 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def category_summary(self, request):
         """Get expenditure summary by category"""
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        try:
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
 
-        query = Expenditure.objects.all()
+            query = Expenditure.objects.all()
 
-        if start_date and end_date:
-            query = query.filter(transaction_date__range=[start_date, end_date])
+            if start_date and end_date:
+                query = query.filter(transaction_date__range=[start_date, end_date])
 
-        category_totals = query.values('category').annotate(
-            total=Sum('amount'),
-            count=Count('id')
-        )
+            category_totals = query.values('category').annotate(
+                total=Sum('amount'),
+                count=Count('id')
+            )
 
-        total_expenditure = query.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            total_expenditure = query.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
 
-        return Response({
-            'start_date': start_date,
-            'end_date': end_date,
-            'total_expenditure': total_expenditure,
-            'by_category': list(category_totals)
-        })
+            return Response({
+                'start_date': start_date,
+                'end_date': end_date,
+                'total_expenditure': total_expenditure,
+                'by_category': list(category_totals)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error retrieving category summary: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while retrieving category summary.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class FinancialDashboardViewSet(viewsets.ViewSet):
     """ViewSet for financial dashboard and reports"""
     
     permission_classes = [IsAuthenticated, CanManageFinance]
-    serializer_class = FinancialSummarySerializer  # Add this line
+    serializer_class = FinancialSummarySerializer
     
     @extend_schema(
         responses={200: FinancialSummarySerializer},
@@ -343,85 +615,109 @@ class FinancialDashboardViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=['get'])
     def summary(self, request):
-        """Get financial summary"""
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
-        
-        # Default to current month
-        if not start_date or not end_date:
-            today = datetime.now().date()
-            start_date = today.replace(day=1)
-            end_date = today
-        
-        # Revenue (payments received)
-        payments = Payment.objects.filter(
-            payment_date__range=[start_date, end_date]
-        )
-        total_revenue = payments.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
-        
-        # Expenditure
-        expenditures = Expenditure.objects.filter(
-            transaction_date__range=[start_date, end_date]
-        )
-        total_expenditure = expenditures.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        
-        # Outstanding fees
-        outstanding_invoices = Invoice.objects.filter(
-            status__in=['unpaid', 'partial']
-        )
-        outstanding_fees = outstanding_invoices.aggregate(total=Sum('balance'))['total'] or Decimal('0.00')
-        
-        # Invoice statistics
-        paid_invoices = Invoice.objects.filter(status='paid').count()
-        unpaid_invoices = Invoice.objects.filter(status='unpaid').count()
-        partial_invoices = Invoice.objects.filter(status='partial').count()
-        
-        summary_data = {
-            'total_revenue': total_revenue,
-            'total_expenditure': total_expenditure,
-            'net_income': total_revenue - total_expenditure,
-            'outstanding_fees': outstanding_fees,
-            'paid_invoices': paid_invoices,
-            'unpaid_invoices': unpaid_invoices,
-            'partial_invoices': partial_invoices,
-        }
-        
-        serializer = FinancialSummarySerializer(summary_data)
-        return Response(serializer.data)
+        """Get financial summary with exception handling"""
+        try:
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            # Default to current month
+            if not start_date or not end_date:
+                today = datetime.now().date()
+                start_date = today.replace(day=1)
+                end_date = today
+            
+            # Revenue (payments received)
+            payments = Payment.objects.filter(
+                payment_date__range=[start_date, end_date]
+            )
+            total_revenue = payments.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+            
+            # Expenditure
+            expenditures = Expenditure.objects.filter(
+                transaction_date__range=[start_date, end_date]
+            )
+            total_expenditure = expenditures.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            
+            # Outstanding fees
+            outstanding_invoices = Invoice.objects.filter(
+                status__in=['unpaid', 'partial']
+            )
+            outstanding_fees = outstanding_invoices.aggregate(total=Sum('balance'))['total'] or Decimal('0.00')
+            
+            # Invoice statistics
+            paid_invoices = Invoice.objects.filter(status='paid').count()
+            unpaid_invoices = Invoice.objects.filter(status='unpaid').count()
+            partial_invoices = Invoice.objects.filter(status='partial').count()
+            
+            summary_data = {
+                'total_revenue': total_revenue,
+                'total_expenditure': total_expenditure,
+                'net_income': total_revenue - total_expenditure,
+                'outstanding_fees': outstanding_fees,
+                'paid_invoices': paid_invoices,
+                'unpaid_invoices': unpaid_invoices,
+                'partial_invoices': partial_invoices,
+            }
+            
+            serializer = FinancialSummarySerializer(summary_data)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving financial summary: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while retrieving financial summary.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
-@action(detail=False, methods=['get'])
-def monthly_trends(self, request):
-    """Get monthly financial trends for the year"""
-    year = int(request.query_params.get('year', datetime.now().year))
-    
-    monthly_data = []
-    
-    for month in range(1, 13):
-        month_start = datetime(year, month, 1).date()
-        if month == 12:
-            month_end = datetime(year, 12, 31).date()
-        else:
-            month_end = datetime(year, month + 1, 1).date() - timedelta(days=1)
-        
-        # Revenue
-        revenue = Payment.objects.filter(
-            payment_date__range=[month_start, month_end]
-        ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
-        
-        # Expenditure
-        expenditure = Expenditure.objects.filter(
-            transaction_date__range=[month_start, month_end]
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        
-        monthly_data.append({
-            'month': month,
-            'month_name': month_start.strftime('%B'),
-            'revenue': float(revenue),
-            'expenditure': float(expenditure),
-            'net': float(revenue - expenditure)
-        })
-    
-    return Response({
-        'year': year,
-        'monthly_data': monthly_data
-    })
+    @action(detail=False, methods=['get'])
+    def monthly_trends(self, request):
+        """Get monthly financial trends for the year"""
+        try:
+            year = int(request.query_params.get('year', datetime.now().year))
+            
+            monthly_data = []
+            
+            for month in range(1, 13):
+                month_start = datetime(year, month, 1).date()
+                if month == 12:
+                    month_end = datetime(year, 12, 31).date()
+                else:
+                    month_end = datetime(year, month + 1, 1).date() - timedelta(days=1)
+                
+                # Revenue
+                revenue = Payment.objects.filter(
+                    payment_date__range=[month_start, month_end]
+                ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+                
+                # Expenditure
+                expenditure = Expenditure.objects.filter(
+                    transaction_date__range=[month_start, month_end]
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                
+                monthly_data.append({
+                    'month': month,
+                    'month_name': month_start.strftime('%B'),
+                    'revenue': float(revenue),
+                    'expenditure': float(expenditure),
+                    'net': float(revenue - expenditure)
+                })
+            
+            return Response({
+                'year': year,
+                'monthly_data': monthly_data
+            })
+            
+        except Exception as e:
+            logger.error(f"Error retrieving monthly trends: {str(e)}", exc_info=True)
+            error_detail = 'An unexpected error occurred while retrieving monthly trends.'
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

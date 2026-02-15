@@ -48,7 +48,7 @@ class Student(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         related_name='registered_students',
-        help_text="Staff member who registered this student"
+        help_text="Student member who registered this student"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -171,3 +171,38 @@ class StudentParent(models.Model):
     
     def __str__(self):
         return f"{self.student.full_name} - {self.parent.full_name}"
+    
+class StudentAttendance(models.Model):
+    """Daily attendance tracking for Student"""
+    
+    class AttendanceStatus(models.TextChoices):
+        PRESENT = 'present', 'Present'
+        ABSENT = 'absent', 'Absent'
+        ON_LEAVE = 'on_leave', 'On Leave'
+        HALF_DAY = 'half_day', 'Half Day'
+    
+    # 1. Lowercase field name  2. Unique related_name
+    student = models.ForeignKey(
+        'Student', 
+        on_delete=models.CASCADE, 
+        related_name='daily_attendance_logs' 
+    )
+    attendance_date = models.DateField()
+    check_in = models.DateTimeField(null=True, blank=True)
+    check_out = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=AttendanceStatus.choices)
+    remarks = models.TextField(blank=True)
+    
+    class Meta:
+        db_table = 'Student_attendance'
+        # Updated to match the lowercase 'student' field
+        unique_together = ['student', 'attendance_date']
+        ordering = ['-attendance_date']
+        indexes = [
+            models.Index(fields=['student', 'attendance_date']),
+            models.Index(fields=['attendance_date']),
+        ]
+    
+    def __str__(self):
+        # Accessing via lowercase 'student'
+        return f"{self.student.full_name} - {self.attendance_date} ({self.get_status_display()})"

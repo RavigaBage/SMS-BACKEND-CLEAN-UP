@@ -12,7 +12,7 @@ from apps.staff.views import (
     StaffViewSet, SalaryStructureViewSet, SalaryPaymentViewSet,
     StaffAttendanceViewSet, LeaveRequestViewSet
 )
-from apps.students.views import StudentViewSet, ParentViewSet, StudentParentViewSet
+from apps.students.views import StudentViewSet, ParentViewSet, StudentParentViewSet,StudentAttendanceViewSet
 from apps.academic.views import (
     AcademicYearViewSet, SubjectViewSet, ClassViewSet,
     EnrollmentViewSet, SubjectAssignmentViewSet
@@ -38,6 +38,7 @@ router.register(r'salary-payments', SalaryPaymentViewSet, basename='salary-payme
 router.register(r'staff-attendance', StaffAttendanceViewSet, basename='staff-attendance')
 router.register(r'leave-requests', LeaveRequestViewSet, basename='leave-request')
 router.register(r'students', StudentViewSet, basename='student')
+router.register(r'student-attendance', StudentAttendanceViewSet, basename='student-attendance')
 router.register(r'parents', ParentViewSet, basename='parent')
 router.register(r'student-parents', StudentParentViewSet, basename='student-parent')
 router.register(r'academic-years', AcademicYearViewSet, basename='academic-year')
@@ -57,7 +58,6 @@ router.register(r'timetable', TimetableViewSet, basename='timetable')
 router.register(r'syllabi', SyllabusViewSet, basename='syllabi')
 router.register(r'teachers', TeacherViewSet, basename='teacher')
 urlpatterns = [
-    # Root endpoint
     path('', lambda r: JsonResponse({
         'service': 'School Management System API',
         'version': '1.0.0',
@@ -66,18 +66,14 @@ urlpatterns = [
         'api': '/api/'
     })),
     
-    # Admin panel
     path('admin/', admin.site.urls),
     
-    # Health check
     path('health/', health_check, name='health-check'),
     
-    # API documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     
-    # Authentication endpoints
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/refresh', RefreshTokenView.as_view(), name='token-refresh'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
@@ -87,7 +83,6 @@ urlpatterns = [
     path('', include(router.urls)),
 ]
 
-# Serve static and media files in development
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

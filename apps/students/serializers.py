@@ -2,7 +2,7 @@ from rest_framework import serializers
 from typing import List, Dict, Any, Optional
 from drf_spectacular.utils import extend_schema_field
 from apps.academic.models import Class
-from .models import Student, Parent, StudentParent
+from .models import Student, Parent, StudentParent,StudentAttendance
 
 
 class ParentSerializer(serializers.ModelSerializer):
@@ -208,3 +208,18 @@ class StudentParentSerializer(serializers.ModelSerializer):
         response['student'] = StudentSerializer(instance.student).data
         response['parent'] = ParentSerializer(instance.parent).data
         return response
+
+class StudentAttendanceSerializer(serializers.ModelSerializer):
+    """Serializer for StudentAttendance model"""
+    
+    Student_name = serializers.CharField(source='Student.full_name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = StudentAttendance
+        fields = [
+            'id', 'Student', 'Student_name', 'attendance_date',
+            'check_in', 'check_out', 'status', 'status_display', 'remarks'
+        ]
+        read_only_fields = ['id']
+

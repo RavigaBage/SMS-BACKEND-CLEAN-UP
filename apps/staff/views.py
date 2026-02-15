@@ -3,6 +3,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from .models import Staff, SalaryStructure, SalaryPayment, StaffAttendance, LeaveRequest
 from .serializers import (
     StaffSerializer, StaffCreateSerializer, StaffUpdateSerializer,
@@ -11,6 +13,9 @@ from .serializers import (
 )
 from .services import StaffService, SalaryService
 from apps.accounts.permissions import CanManageStaff, IsAdminOrHeadmaster
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class StaffViewSet(viewsets.ModelViewSet):
@@ -81,25 +86,61 @@ class StaffViewSet(viewsets.ModelViewSet):
                 'effective_from': serializer.validated_data.get('salary_effective_from'),
             }
         
-        # Create staff
+        # Create staff with exception handling
         service = StaffService()
-        result = service.create_staff_with_user(
-            staff_data=staff_data,
-            user_data=user_data if user_data else None,
-            created_by=request.user
-        )
-        
-        response_data = StaffSerializer(result['staff']).data
-        
-        # Include generated credentials if password was auto-generated
-        if result['generated_password']:
-            response_data['credentials'] = {
-                'username': result['username'],
-                'password': result['generated_password'],
-                'message': 'Please share these credentials with the staff member. Password shown only once.'
-            }
-        
-        return Response(response_data, status=status.HTTP_201_CREATED)
+        try:
+            result = service.create_staff_with_user(
+                staff_data=staff_data,
+                user_data=user_data if user_data else None,
+                created_by=request.user
+            )
+            
+            response_data = StaffSerializer(result['staff']).data
+            
+            # Include generated credentials if password was auto-generated
+            if result['generated_password']:
+                response_data['credentials'] = {
+                    'username': result['username'],
+                    'password': result['generated_password'],
+                    'message': 'Please share these credentials with the staff member. Password shown only once.'
+                }
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating staff: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_message = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_message = e.messages[0] if e.messages else str(e)
+            else:
+                error_message = str(e)
+            
+            return Response({'error':f'Validation Error: {error_message}','detail':''},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            # Handle database integrity errors
+            logger.error(f"Integrity error creating staff: {str(e)}")
+            return Response('Database Error: A database constraint was violated. This may be due to duplicate data.',
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except PermissionError as e:
+            # Handle permission errors
+            logger.error(f"Permission error creating staff: {str(e)}")
+            return Response(f"Permission Denied:{str(e)}",
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+        except Exception as e:
+            # Handle unexpected errors
+            logger.error(f"Unexpected error creating staff: {str(e)}", exc_info=True)
+            return Response('Server Error An unexpected error occurred while creating the staff member.',
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def update(self, request, *args, **kwargs):
         """Update staff information"""
@@ -109,9 +150,41 @@ class StaffViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         service = StaffService()
-        staff = service.update_staff(instance.id, serializer.validated_data)
-        
-        return Response(StaffSerializer(staff).data)
+        try:
+            staff = service.update_staff(instance.id, serializer.validated_data)
+            return Response(StaffSerializer(staff).data)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error updating staff {instance.id}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_message = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_message = e.messages[0] if e.messages else str(e)
+            else:
+                error_message = str(e)
+            
+            return Response(f'Validation Error {error_message}',
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error updating staff {instance.id}: {str(e)}")
+            return Response(
+                'A database constraint was violated.'
+                ,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error updating staff {instance.id}: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'Server Error',
+                    'detail': 'An unexpected error occurred while updating the staff member.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, CanManageStaff])
     def deactivate(self, request, pk=None):
@@ -119,28 +192,79 @@ class StaffViewSet(viewsets.ModelViewSet):
         staff = self.get_object()
         
         service = StaffService()
-        staff = service.deactivate_staff(staff.id, request.user)
-        
-        return Response({
-            'message': f'{staff.full_name} has been deactivated',
-            'staff': StaffSerializer(staff).data
-        })
+        try:
+            staff = service.deactivate_staff(staff.id, request.user)
+            
+            return Response({
+                'message': f'{staff.full_name} has been deactivated',
+                'staff': StaffSerializer(staff).data
+            })
+            
+        except ValidationError as e:
+            logger.error(f"Validation error deactivating staff {pk}: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_message = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_message = e.messages[0] if e.messages else str(e)
+            else:
+                error_message = str(e)
+            
+            return Response(
+                {
+                    'error': 'Validation Error',
+                    'detail': error_message
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error deactivating staff {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'Server Error',
+                    'detail': 'An unexpected error occurred while deactivating the staff member.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=['get'])
     def teachers(self, request):
         """Get all active teachers"""
-        service = StaffService()
-        teachers = service.get_active_teachers()
-        serializer = StaffSerializer(teachers, many=True)
-        return Response(serializer.data)
+        try:
+            service = StaffService()
+            teachers = service.get_active_teachers()
+            serializer = StaffSerializer(teachers, many=True)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving teachers: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'Server Error',
+                    'detail': 'An unexpected error occurred while retrieving teachers.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['get'])
     def salary_history(self, request, pk=None):
         """Get salary payment history for staff"""
-        staff = self.get_object()
-        payments = SalaryPayment.objects.filter(staff=staff).order_by('-payment_period')
-        serializer = SalaryPaymentSerializer(payments, many=True)
-        return Response(serializer.data)
+        try:
+            staff = self.get_object()
+            payments = SalaryPayment.objects.filter(staff=staff).order_by('-payment_period')
+            serializer = SalaryPaymentSerializer(payments, many=True)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving salary history for staff {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'Server Error',
+                    'detail': 'An unexpected error occurred while retrieving salary history.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class SalaryStructureViewSet(viewsets.ModelViewSet):
@@ -196,7 +320,10 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
         
         if not staff_id or not payment_period:
             return Response(
-                {'error': 'staff_id and payment_period are required'},
+                {
+                    'error': 'Validation Error',
+                    'detail': 'staff_id and payment_period are required'
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -210,8 +337,44 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
             
             serializer = SalaryPaymentSerializer(salary_payment)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error processing salary: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_message = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_message = e.messages[0] if e.messages else str(e)
+            else:
+                error_message = str(e)
+            
+            return Response(
+                {
+                    'error': 'Validation Error',
+                    'detail': error_message
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except IntegrityError as e:
+            logger.error(f"Integrity error processing salary: {str(e)}")
+            return Response(
+                {
+                    'error': 'Database Error',
+                    'detail': 'A database constraint was violated.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error processing salary: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'Server Error',
+                    'detail': 'An unexpected error occurred while processing the salary.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrHeadmaster])
     def mark_as_paid(self, request, pk=None):
@@ -223,7 +386,10 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
         
         if not payment_date or not payment_method:
             return Response(
-                {'error': 'payment_date and payment_method are required'},
+                {
+                    'error': 'Validation Error',
+                    'detail': 'payment_date and payment_method are required'
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -237,8 +403,34 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
             
             serializer = SalaryPaymentSerializer(salary_payment)
             return Response(serializer.data)
+            
+        except ValidationError as e:
+            logger.error(f"Validation error marking salary as paid: {str(e)}")
+            
+            if hasattr(e, 'message_dict'):
+                error_message = e.message_dict
+            elif hasattr(e, 'messages'):
+                error_message = e.messages[0] if e.messages else str(e)
+            else:
+                error_message = str(e)
+            
+            return Response(
+                {
+                    'error': 'Validation Error',
+                    'detail': error_message
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Unexpected error marking salary as paid: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'Server Error',
+                    'detail': 'An unexpected error occurred while updating the salary payment.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class StaffAttendanceViewSet(viewsets.ModelViewSet):
@@ -329,17 +521,46 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         
         serializer = LeaveApprovalSerializer(data=request.data)
         if serializer.is_valid():
-            action_type = serializer.validated_data['action']
-            
-            if action_type == 'approve':
-                leave_request.status = LeaveRequest.LeaveStatus.APPROVED
-            else:
-                leave_request.status = LeaveRequest.LeaveStatus.REJECTED
-            
-            leave_request.approved_by = request.user
-            leave_request.save()
-            
-            response_serializer = LeaveRequestSerializer(leave_request)
-            return Response(response_serializer.data)
+            try:
+                action_type = serializer.validated_data['action']
+                
+                if action_type == 'approve':
+                    leave_request.status = LeaveRequest.LeaveStatus.APPROVED
+                else:
+                    leave_request.status = LeaveRequest.LeaveStatus.REJECTED
+                
+                leave_request.approved_by = request.user
+                leave_request.save()
+                
+                response_serializer = LeaveRequestSerializer(leave_request)
+                return Response(response_serializer.data)
+                
+            except ValidationError as e:
+                logger.error(f"Validation error approving/rejecting leave request {pk}: {str(e)}")
+                
+                if hasattr(e, 'message_dict'):
+                    error_message = e.message_dict
+                elif hasattr(e, 'messages'):
+                    error_message = e.messages[0] if e.messages else str(e)
+                else:
+                    error_message = str(e)
+                
+                return Response(
+                    {
+                        'error': 'Validation Error',
+                        'detail': error_message
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            except Exception as e:
+                logger.error(f"Unexpected error approving/rejecting leave request {pk}: {str(e)}", exc_info=True)
+                return Response(
+                    {
+                        'error': 'Server Error',
+                        'detail': 'An unexpected error occurred while processing the leave request.'
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
