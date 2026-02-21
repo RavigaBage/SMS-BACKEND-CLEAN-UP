@@ -1,39 +1,56 @@
 from rest_framework import serializers
-from .models import Timetable
+from .models import Timetable,Syllabus
+from rest_framework import status
 from apps.academic.serializers import ClassSerializer, SubjectSerializer
-from apps.staff.serializers import StaffSerializer
-
-from rest_framework import serializers
-from .models import Syllabus
+from apps.teachers.serializers import TeacherSerializer
+from apps.academic.models import Class, Subject
 from apps.teachers.models import Teacher
-from apps.academic.models import Class,Subject
-
-
+from apps.accounts.models import User
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from apps.accounts.permissions import IsTeacher
 
 class TimetableSerializer(serializers.ModelSerializer):
-    """Serializer for Timetable model"""
-    
     class_obj = ClassSerializer(read_only=True)
-    class_id = serializers.IntegerField(write_only=True, source='class_obj')
+    class_id = serializers.PrimaryKeyRelatedField(
+        queryset=Class.objects.all(),
+        source='class_obj',
+        write_only=True
+    )
+
     subject = SubjectSerializer(read_only=True)
-    subject_id = serializers.IntegerField(write_only=True)
-    teacher = StaffSerializer(read_only=True)
-    teacher_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    subject_id = serializers.PrimaryKeyRelatedField(
+        queryset=Subject.objects.all(),
+        source='subject',
+        write_only=True
+    )
+
+    teacher = TeacherSerializer(read_only=True)
+    teacher_id = serializers.PrimaryKeyRelatedField(
+        queryset=Teacher.objects.all(),
+        source='teacher',
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
+
     day_of_week_display = serializers.CharField(source='get_day_of_week_display', read_only=True)
-    
+
+    term = serializers.CharField(required=False, allow_blank=True)
+    academic_year = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = Timetable
         fields = [
-            'id', 'class_obj', 'class_id', 'subject', 'subject_id',
-            'teacher', 'teacher_id', 'day_of_week', 'day_of_week_display',
-            'start_time', 'end_time', 'room_number'
+            "id",
+            "class_obj", "class_id",
+            "subject", "subject_id",
+            "teacher", "teacher_id",
+            "term", "academic_year",
+            "day_of_week", "day_of_week_display",
+            "start_time", "end_time", "room_number",
         ]
-        read_only_fields = ['id']
-    
-    def validate(self, data):
-        if data['start_time'] >= data['end_time']:
-            raise serializers.ValidationError("Start time must be before end time")
-
+        read_only_fields = ["id"] 
 
 class SyllabusSerializer(serializers.ModelSerializer):
     # Read-only nested serializers (for GET requests)
@@ -52,7 +69,8 @@ class SyllabusSerializer(serializers.ModelSerializer):
         queryset=Teacher.objects.all(),
         source='teacher',
         write_only=True,
-        required=True
+        required=False,
+        allow_null=True,
     )
     class_id = serializers.PrimaryKeyRelatedField(
         queryset=Class.objects.all(),
@@ -78,6 +96,18 @@ class SyllabusSerializer(serializers.ModelSerializer):
             'learning_objectives',
         ]
         read_only_fields = ['id']
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAuthenticated(), IsTeacher()]  # ← only teachers can write
+        return [IsAuthenticated()]
+
+    def to_internal_value(self, data):
+        data = data.copy()
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'role') and request.user.role == User.Role.TEACHER:
+            data.pop('teacher_id', None)
+        return super().to_internal_value(data)
 
     def get_subject(self, obj):
         """Return subject details"""
@@ -112,27 +142,25 @@ class SyllabusSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """
-        Validate that the combination of subject, teacher, class, and week_number is unique
-        """
-        subject = data.get('subject')
-        teacher = data.get('teacher')
-        class_obj = data.get('class_obj')
+        subject     = data.get('subject')
+        teacher     = data.get('teacher')    # may be None for teacher role — that's fine
+        class_obj   = data.get('class_obj')
         week_number = data.get('week_number')
 
-        # Only validate on create or if these fields are being updated
+        # Skip uniqueness check if teacher isn't in the payload yet
+        # (it gets injected by the mixin in perform_create after validation)
+        if not teacher:
+            return data
+
         if not self.instance or any(key in data for key in ['subject', 'teacher', 'class_obj', 'week_number']):
             query = Syllabus.objects.filter(
                 subject=subject,
                 teacher=teacher,
                 class_obj=class_obj,
-                week_number=week_number
+                week_number=week_number,
             )
-            
-            # Exclude current instance on update
             if self.instance:
                 query = query.exclude(pk=self.instance.pk)
-            
             if query.exists():
                 raise serializers.ValidationError(
                     "A syllabus entry already exists for this subject, teacher, class, and week number."

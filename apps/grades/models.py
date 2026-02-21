@@ -21,8 +21,6 @@ class Grade(models.Model):
         FINAL = 'final', 'Final Exam'
         PROJECT = 'project', 'Project'
 
-    # --- Relationships ---
-    # Use unique related_names to avoid the clashes from your previous error
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='academic_grades')
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='academic_grades')
     class_obj = models.ForeignKey(

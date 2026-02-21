@@ -25,14 +25,14 @@ class StaffSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     def get_assigned_subjects(self, obj):
             """Returns subjects the staff is assigned to teach across different classes"""
-            assignments = obj.subject_assignments.select_related('class_obj', 'subject', 'class_obj__academic_year')
+            assignments = obj.subject_assignments.select_related('class_obj', 'subject')
             return [
                 {
                     "id": a.id,
                     "subject_name": a.subject.subject_name,
                     "subject_code": a.subject.subject_code,
                     "class_name": a.class_obj.class_name,
-                    "academic_year": a.class_obj.academic_year.year_name
+                    "academic_year": a.class_obj.academic_year
                 } for a in assignments
             ]
 
@@ -114,6 +114,14 @@ class SalaryPaymentSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
     processed_by_username = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+    
+    def validate(self, data):
+        base       = data.get('base_salary', 0)
+        allowances = data.get('allowances', 0)
+        deductions = data.get('deductions', 0)
+        tax        = data.get('tax', 0)
+        data['net_salary'] = base + allowances - deductions - tax
+        return data
     
     class Meta:
         model = SalaryPayment

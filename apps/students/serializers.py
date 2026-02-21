@@ -2,7 +2,7 @@ from rest_framework import serializers
 from typing import List, Dict, Any, Optional
 from drf_spectacular.utils import extend_schema_field
 from apps.academic.models import Class
-from .models import Student, Parent, StudentParent,StudentAttendance
+from .models import Student, Parent, StudentParent, StudentAttendance
 
 
 class ParentSerializer(serializers.ModelSerializer):
@@ -135,7 +135,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
                 "name": enrollment.class_obj.class_name,
                 "grade_level": enrollment.class_obj.grade_level,
                 "section": enrollment.class_obj.section,
-                "academic_year": enrollment.class_obj.academic_year.year_name
+                "academic_year": enrollment.class_obj.academic_year
             }
         return None
 
@@ -222,4 +222,85 @@ class StudentAttendanceSerializer(serializers.ModelSerializer):
             'check_in', 'check_out', 'status', 'status_display', 'remarks'
         ]
         read_only_fields = ['id']
+
+
+class ParentAccessWardSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    admission_number = serializers.CharField()
+
+
+class ParentAccessSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True)
+    has_app_access = serializers.BooleanField(read_only=True)
+    user_is_active = serializers.SerializerMethodField()
+    invite_code = serializers.SerializerMethodField()
+    invite_status = serializers.SerializerMethodField()
+    invite_expires_at = serializers.SerializerMethodField()
+    wards = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Parent
+        fields = [
+            "id",
+            "full_name",
+            "email",
+            "phone_number",
+            "relationship",
+            "has_app_access",
+            "user_is_active",
+            "invite_code",
+            "invite_status",
+            "invite_expires_at",
+            "wards",
+        ]
+
+    def _latest_invite(self, obj):
+        invites = getattr(obj, "invites", None)
+        if invites is None:
+            return obj.invites.order_by("-created_at").first()
+        # Works with prefetched related manager cache
+        invite_list = list(invites.all())
+        return invite_list[0] if invite_list else None
+
+    def get_user_is_active(self, obj):
+        return bool(obj.user and obj.user.is_active)
+
+    def get_invite_code(self, obj):
+        invite = self._latest_invite(obj)
+        return invite.code if invite else None
+
+    def get_invite_status(self, obj):
+        invite = self._latest_invite(obj)
+        if not invite:
+            return "none"
+        if invite.used:
+            return "used"
+        if invite.is_expired:
+            return "expired"
+        return "active"
+
+    def get_invite_expires_at(self, obj):
+        invite = self._latest_invite(obj)
+        return invite.expires_at if invite else None
+
+    @extend_schema_field(serializers.ListSerializer(child=serializers.DictField()))
+    def get_wards(self, obj):
+        links = getattr(obj, "student_links", None)
+        if links is None:
+            links_qs = obj.student_links.select_related("student")
+        else:
+            links_qs = links.select_related("student")
+
+        data = [
+            {
+                "id": link.student.id,
+                "first_name": link.student.first_name,
+                "last_name": link.student.last_name,
+                "admission_number": link.student.admission_number,
+            }
+            for link in links_qs
+        ]
+        return ParentAccessWardSerializer(data, many=True).data
 

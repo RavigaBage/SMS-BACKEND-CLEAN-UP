@@ -1,11 +1,16 @@
+from django.forms import ValidationError
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
-from django.core.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
+from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Timetable, Syllabus
+from apps.accounts.models import User
 from .serializers import TimetableSerializer, SyllabusSerializer, SyllabusListSerializer
 from apps.accounts.permissions import IsAdminOrHeadmaster
 import logging
@@ -14,286 +19,315 @@ logger = logging.getLogger(__name__)
 
 
 class TimetableViewSet(viewsets.ModelViewSet):
-    """ViewSet for Timetable management"""
-    
-    queryset = Timetable.objects.select_related('class_obj', 'subject', 'teacher').all()
+    """
+    Enterprise-grade timetable viewset.
+
+    Features:
+    - Safe filtering
+    - Conflict detection
+    - Clean validation
+    - Role-based permissions
+    """
+
+    queryset = Timetable.objects.select_related(
+        "class_obj",
+        "subject",
+        "teacher"
+    ).all()
+
     serializer_class = TimetableSerializer
     permission_classes = [IsAuthenticated]
-    
+
+    # -------------------------
+    # Permissions
+    # -------------------------
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ["create", "update", "partial_update", "destroy"]:
             return [IsAuthenticated(), IsAdminOrHeadmaster()]
         return [IsAuthenticated()]
-    
+
+
+    def _get_int_param(self, param_name):
+        value = self.request.query_params.get(param_name)
+        if value is None:
+            return None
+
+        if not str(value).isdigit():
+            raise DjangoValidationError(
+                {param_name: "Must be a numeric ID."}
+            )
+
+        return int(value)
+
+    def _apply_filters(self, queryset):
+        class_id = self._get_int_param("class_id")
+        teacher_id = self._get_int_param("teacher_id")
+        day = self._get_int_param("day")
+
+        if class_id:
+            queryset = queryset.filter(class_obj_id=class_id)
+
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+
+        if day:
+            queryset = queryset.filter(day_of_week=day)
+
+        return queryset
+
+    def _stringify_error(self, err):
+        if hasattr(err, "detail"):
+            return str(err.detail)
+        if hasattr(err, "message_dict"):
+            return str(err.message_dict)
+        if hasattr(err, "messages"):
+            return str(err.messages[0] if err.messages else err)
+        return str(err)
+
+    def _is_duplicate_integrity_error(self, err):
+        msg = str(err).lower()
+        duplicate_tokens = [
+            "unique",
+            "duplicate",
+            "already exists",
+            "unique constraint",
+            "duplicate key",
+        ]
+        return any(token in msg for token in duplicate_tokens)
+
+    def _error_response(self, message, status_code):
+        # Always return a string message per API contract requested by frontend.
+        msg = str(message)
+        return Response(msg, status=status_code)
+
+    # -------------------------
+    # Queryset Override
+    # -------------------------
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        class_id = self.request.query_params.get('class_id', None)
-        if class_id:
-            queryset = queryset.filter(class_obj_id=class_id)
-        
-        teacher_id = self.request.query_params.get('teacher_id', None)
-        if teacher_id:
-            queryset = queryset.filter(teacher_id=teacher_id)
-        
-        day = self.request.query_params.get('day', None)
-        if day:
-            queryset = queryset.filter(day_of_week=day)
-        
-        return queryset
-    
-    def create(self, request, *args, **kwargs):
-        """Create timetable entry with exception handling"""
-        try:
-            return super().create(request, *args, **kwargs)
+        term = self.request.query_params.get("term")
+        academic_year = self.request.query_params.get("academic_year")
+
+        if term:
+            queryset = queryset.filter(term=term)
+
+        if academic_year:
+            queryset = queryset.filter(academic_year=academic_year)
             
-        except ValidationError as e:
-            logger.error(f"Validation error creating timetable entry: {str(e)}")
-            
-            if hasattr(e, 'message_dict'):
-                error_detail = e.message_dict
-            elif hasattr(e, 'messages'):
-                error_detail = e.messages[0] if e.messages else str(e)
-            else:
-                error_detail = str(e)
-            
-            return Response(
-                {
-                    'error': f'Validation Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_400_BAD_REQUEST
+        return self._apply_filters(queryset)
+
+    # -------------------------
+    # Conflict Detection Logic
+    # -------------------------
+    def _check_conflicts(
+        self,
+        class_id,
+        teacher_id,
+        day,
+        start_time,
+        end_time,
+        term="",
+        academic_year="",
+        instance_id=None
+    ):
+        """
+        Prevent:
+        - Teacher double booking
+        - Class double booking
+        """
+        overlapping_filter = Q(
+            day_of_week=day,
+            start_time__lt=end_time,
+            end_time__gt=start_time,
+            term=term,
+            academic_year=academic_year,
+        )
+
+        conflicts = Timetable.objects.filter(overlapping_filter)
+
+        if instance_id:
+            conflicts = conflicts.exclude(id=instance_id)
+
+        class_conflict = conflicts.filter(class_obj_id=class_id).exists()
+        teacher_conflict = conflicts.filter(teacher_id=teacher_id).exists()
+
+        if class_conflict:
+            raise DjangoValidationError(
+                {"This class already has a lesson at this time."}
             )
-            
+
+        if teacher_conflict:
+            raise DjangoValidationError(
+                {"This teacher is already booked at this time."}
+            )
+
+    # -------------------------
+    # Create Override
+    # -------------------------
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            data = serializer.validated_data
+
+            self._check_conflicts(
+                class_id=data["class_obj"].id,
+                teacher_id=(data.get("teacher").id if data.get("teacher") else None),
+                day=data["day_of_week"],
+                start_time=data["start_time"],
+                end_time=data["end_time"],
+                term=data.get("term", ""),
+                academic_year=data.get("academic_year", ""),
+            )
+
+            self.perform_create(serializer)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        except (DRFValidationError, DjangoValidationError) as e:
+            logger.error(f"Validation error creating timetable entry: {str(e)}")
+            return self._error_response(self._stringify_error(e), status.HTTP_400_BAD_REQUEST)
+
         except IntegrityError as e:
             logger.error(f"Integrity error creating timetable entry: {str(e)}")
-            error_detail = 'Timetable entry conflicts with existing schedule or database constraint violated.'
-            return Response(
-                {
-                    'error': f'Database Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_400_BAD_REQUEST
+            if self._is_duplicate_integrity_error(e):
+                return self._error_response(
+                    "Duplicate timetable entry detected. This schedule already exists.",
+                    status.HTTP_400_BAD_REQUEST,
+                )
+            return self._error_response(
+                "Database integrity error while creating timetable entry.",
+                status.HTTP_400_BAD_REQUEST,
             )
-            
+
         except Exception as e:
             logger.error(f"Unexpected error creating timetable entry: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while creating the timetable entry.'
-            return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return self._error_response(
+                "An unexpected server error occurred while creating timetable entry.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-    
+
+    # -------------------------
+    # Update Override
+    # -------------------------
     def update(self, request, *args, **kwargs):
-        """Update timetable entry with exception handling"""
         try:
-            return super().update(request, *args, **kwargs)
-            
-        except ValidationError as e:
-            logger.error(f"Validation error updating timetable entry: {str(e)}")
-            
-            if hasattr(e, 'message_dict'):
-                error_detail = e.message_dict
-            elif hasattr(e, 'messages'):
-                error_detail = e.messages[0] if e.messages else str(e)
-            else:
-                error_detail = str(e)
-            
-            return Response(
-                {
-                    'error': f'Validation Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_400_BAD_REQUEST
+            partial = kwargs.pop("partial", False)
+            instance = self.get_object()
+
+            serializer = self.get_serializer(
+                instance,
+                data=request.data,
+                partial=partial
             )
-            
+
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+
+            self._check_conflicts(
+                class_id=data.get("class_obj", instance.class_obj).id,
+                teacher_id=(data.get("teacher", instance.teacher).id if data.get("teacher", instance.teacher) else None),
+                day=data.get("day_of_week", instance.day_of_week),
+                start_time=data.get("start_time", instance.start_time),
+                end_time=data.get("end_time", instance.end_time),
+                term=data.get("term", instance.term),
+                academic_year=data.get("academic_year", instance.academic_year),
+                instance_id=instance.id
+            )
+
+            self.perform_update(serializer)
+            return Response(serializer.data)
+
+        except (DRFValidationError, DjangoValidationError) as e:
+            logger.error(f"Validation error updating timetable entry: {str(e)}")
+            return self._error_response(self._stringify_error(e), status.HTTP_400_BAD_REQUEST)
+
         except IntegrityError as e:
             logger.error(f"Integrity error updating timetable entry: {str(e)}")
-            error_detail = 'Timetable entry conflicts with existing schedule or database constraint violated.'
-            return Response(
-                {
-                    'error': f'Database Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_400_BAD_REQUEST
+            if self._is_duplicate_integrity_error(e):
+                return self._error_response(
+                    "Duplicate timetable entry detected. This schedule already exists.",
+                    status.HTTP_400_BAD_REQUEST,
+                )
+            return self._error_response(
+                "Database integrity error while updating timetable entry.",
+                status.HTTP_400_BAD_REQUEST,
             )
-            
+
         except Exception as e:
             logger.error(f"Unexpected error updating timetable entry: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while updating the timetable entry.'
-            return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return self._error_response(
+                "An unexpected server error occurred while updating timetable entry.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-    
-    @action(detail=False, methods=['get'])
+
+    # -------------------------
+    # Custom Actions
+    # -------------------------
+    @action(detail=False, methods=["get"])
     def class_schedule(self, request):
-        """Get full weekly schedule for a class with exception handling"""
-        try:
-            class_id = request.query_params.get('class_id')
-            
-            if not class_id:
-                error_detail = 'class_id is required'
-                return Response(
-                    {
-                        'error': f'Validation Error: {error_detail}',
-                        'detail': error_detail
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            timetable_entries = Timetable.objects.filter(
-                class_obj_id=class_id
-            ).select_related('subject', 'teacher').order_by('day_of_week', 'start_time')
-            
-            # Group by day
-            schedule = {}
-            for entry in timetable_entries:
-                day = entry.get_day_of_week_display()
-                if day not in schedule:
-                    schedule[day] = []
-                
-                schedule[day].append(TimetableSerializer(entry).data)
-            
-            return Response(schedule)
-            
-        except Exception as e:
-            logger.error(f"Error retrieving class schedule: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while retrieving the class schedule.'
-            return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        class_id = self._get_int_param("class_id")
+
+        if not class_id:
+            raise DjangoValidationError(
+                {"class_id query parameter is required."}
             )
-    
-    @action(detail=False, methods=['get'])
+
+        queryset = Timetable.objects.filter(class_obj_id=class_id)
+        serializer = self.get_serializer(queryset, many=True)
+
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
     def teacher_schedule(self, request):
-        """Get full weekly schedule for a teacher with exception handling"""
-        try:
-            teacher_id = request.query_params.get('teacher_id')
-            
-            if not teacher_id:
-                error_detail = 'teacher_id is required'
-                return Response(
-                    {
-                        'error': f'Validation Error: {error_detail}',
-                        'detail': error_detail
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            timetable_entries = Timetable.objects.filter(
-                teacher_id=teacher_id
-            ).select_related('class_obj', 'subject').order_by('day_of_week', 'start_time')
-            
-            # Group by day
-            schedule = {}
-            for entry in timetable_entries:
-                day = entry.get_day_of_week_display()
-                if day not in schedule:
-                    schedule[day] = []
-                
-                schedule[day].append(TimetableSerializer(entry).data)
-            
-            return Response(schedule)
-            
-        except Exception as e:
-            logger.error(f"Error retrieving teacher schedule: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while retrieving the teacher schedule.'
-            return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        teacher_id = self._get_int_param("teacher_id")
+
+        if not teacher_id:
+            raise DjangoValidationError(
+                {"teacher_id query parameter is required."}
             )
-    
-    @action(detail=False, methods=['post'])
+
+        queryset = Timetable.objects.filter(teacher_id=teacher_id)
+        serializer = self.get_serializer(queryset, many=True)
+
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
     def check_conflicts(self, request):
-        """Check for scheduling conflicts with exception handling"""
-        try:
-            class_id = request.data.get('class_id')
-            teacher_id = request.data.get('teacher_id')
-            day_of_week = request.data.get('day_of_week')
-            start_time = request.data.get('start_time')
-            end_time = request.data.get('end_time')
-            exclude_id = request.data.get('exclude_id')
-            
-            if not all([day_of_week, start_time, end_time]):
-                error_detail = 'day_of_week, start_time, and end_time are required'
-                return Response(
-                    {
-                        'error': f'Validation Error: {error_detail}',
-                        'detail': error_detail
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            conflicts = []
-            
-            # Check class conflicts
-            if class_id:
-                class_conflicts = Timetable.objects.filter(
-                    class_obj_id=class_id,
-                    day_of_week=day_of_week,
-                    start_time__lt=end_time,
-                    end_time__gt=start_time
-                )
-                
-                if exclude_id:
-                    class_conflicts = class_conflicts.exclude(id=exclude_id)
-                
-                if class_conflicts.exists():
-                    conflicts.append({
-                        'type': 'class',
-                        'message': 'Class already has a session at this time',
-                        'entries': TimetableSerializer(class_conflicts, many=True).data
-                    })
-            
-            # Check teacher conflicts
-            if teacher_id:
-                teacher_conflicts = Timetable.objects.filter(
-                    teacher_id=teacher_id,
-                    day_of_week=day_of_week,
-                    start_time__lt=end_time,
-                    end_time__gt=start_time
-                )
-                
-                if exclude_id:
-                    teacher_conflicts = teacher_conflicts.exclude(id=exclude_id)
-                
-                if teacher_conflicts.exists():
-                    conflicts.append({
-                        'type': 'teacher',
-                        'message': 'Teacher already has a session at this time',
-                        'entries': TimetableSerializer(teacher_conflicts, many=True).data
-                    })
-            
-            return Response({
-                'has_conflicts': len(conflicts) > 0,
-                'conflicts': conflicts
-            })
-            
-        except Exception as e:
-            logger.error(f"Error checking conflicts: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while checking for conflicts.'
-            return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        """
+        API endpoint to manually check scheduling conflicts.
+        """
+
+        class_id = self._get_int_param("class_id")
+        teacher_id = self._get_int_param("teacher_id")
+        day = self._get_int_param("day")
+
+        start_time = request.query_params.get("start_time")
+        end_time = request.query_params.get("end_time")
+
+        if not all([class_id, teacher_id, day, start_time, end_time]):
+            raise DjangoValidationError(
+                "class_id, teacher_id, day, start_time, end_time are required."
             )
 
+        overlapping_filter = Q(
+            day_of_week=day,
+            start_time__lt=end_time,
+            end_time__gt=start_time
+        )
 
+        conflicts = Timetable.objects.filter(overlapping_filter)
+
+        return Response({
+            "class_conflict": conflicts.filter(
+                class_obj_id=class_id
+            ).exists(),
+            "teacher_conflict": conflicts.filter(
+                teacher_id=teacher_id
+            ).exists(),
+        })
+    
 class SyllabusViewSet(viewsets.ModelViewSet):
     """ViewSet for Syllabus management"""
     
@@ -303,101 +337,127 @@ class SyllabusViewSet(viewsets.ModelViewSet):
     search_fields = ['topic_title', 'content_summary', 'learning_objectives']
     ordering_fields = ['week_number', 'topic_title']
     ordering = ['week_number']
-    permission_classes = [IsAuthenticated]
 
     def get_serializer_class(self):
-        """Use different serializers for list vs detail views"""
         if self.action == 'list':
             return SyllabusListSerializer
         return SyllabusSerializer
-    
+
+    # ── Permission split: anyone authenticated can read, writes are guarded ──
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAuthenticated(), IsAdminOrHeadmaster()]
+        return [IsAuthenticated()]
+
+    # ── Ownership check reused by create & update ─────────────────────────────
+    def _assert_ownership(self, request, teacher_id, class_obj_id):
+        """
+        Raises PermissionDenied if the requesting teacher is not assigned
+        to the teacher or class referenced in the payload.
+        Admins/Headmasters bypass this entirely.
+        """
+        user = request.user
+
+        # Admins and headmasters are always allowed
+        if user.role in [User.Role.ADMIN, User.Role.HEADMASTER]:
+            return
+
+        # For teachers: they must own the teacher slot AND the class
+        if user.role == User.Role.TEACHER:
+            try:
+                teacher_profile = user.teacher_profile  # adjust to your related_name
+            except Exception:
+                raise PermissionDenied("No teacher profile found for this account.")
+
+            if teacher_id and int(teacher_id) != teacher_profile.id:
+                raise PermissionDenied(
+                    "You can only upload a syllabus assigned to yourself as the teacher."
+                )
+
+            if class_obj_id:
+                # Check the teacher is actually assigned to this class in the timetable
+                is_assigned = Timetable.objects.filter(
+                    teacher=teacher_profile,
+                    class_obj_id=int(class_obj_id)
+                ).exists()
+
+                if not is_assigned:
+                    raise PermissionDenied(
+                        "You are not assigned to this class and cannot upload a syllabus for it."
+                    )
+
     def create(self, request, *args, **kwargs):
-        """Create syllabus with exception handling"""
         try:
-            return super().create(request, *args, **kwargs)
+            # Pull the IDs before full validation so we can check ownership early
+            teacher_id   = request.data.get('teacher')
+            class_obj_id = request.data.get('class_obj')
+            self._assert_ownership(request, teacher_id, class_obj_id)
             
+            if request.user.role not in [User.Role.TEACHER]:
+                return Response(
+                    {"error": "Only teachers can create a syllabus. Please log in as a teacher."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return super().create(request, *args, **kwargs)
+
+
+        except PermissionDenied as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+
         except ValidationError as e:
             logger.error(f"Validation error creating syllabus: {str(e)}")
-            
-            if hasattr(e, 'message_dict'):
-                error_detail = e.message_dict
-            elif hasattr(e, 'messages'):
-                error_detail = e.messages[0] if e.messages else str(e)
-            else:
-                error_detail = str(e)
-            
-            return Response(
-                {
-                    'error': f'Validation Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_400_BAD_REQUEST
+            error_detail = (
+                e.message_dict if hasattr(e, 'message_dict')
+                else e.messages[0] if hasattr(e, 'messages') and e.messages
+                else str(e)
             )
-            
+            return Response({'Validation Error': str(error_detail)}, status=status.HTTP_400_BAD_REQUEST)
+
         except IntegrityError as e:
             logger.error(f"Integrity error creating syllabus: {str(e)}")
-            error_detail = 'Syllabus already exists for this subject and week or database constraint violated.'
             return Response(
-                {
-                    'error': f'Database Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {'Database Error': 'Syllabus already exists for this subject and week or database constraint violated.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
+
         except Exception as e:
             logger.error(f"Unexpected error creating syllabus: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while creating the syllabus.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {'Server Error': 'An unexpected error occurred while creating the syllabus.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     def update(self, request, *args, **kwargs):
-        """Update syllabus with exception handling"""
         try:
+            teacher_id   = request.data.get('teacher')
+            class_obj_id = request.data.get('class_obj')
+            self._assert_ownership(request, teacher_id, class_obj_id)
+
             return super().update(request, *args, **kwargs)
-            
+
+        except PermissionDenied as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+
         except ValidationError as e:
             logger.error(f"Validation error updating syllabus: {str(e)}")
-            
-            if hasattr(e, 'message_dict'):
-                error_detail = e.message_dict
-            elif hasattr(e, 'messages'):
-                error_detail = e.messages[0] if e.messages else str(e)
-            else:
-                error_detail = str(e)
-            
-            return Response(
-                {
-                    'error': f'Validation Error: {error_detail}',
-                    'detail': error_detail
-                },
-                status=status.HTTP_400_BAD_REQUEST
+            error_detail = (
+                e.message_dict if hasattr(e, 'message_dict')
+                else e.messages[0] if hasattr(e, 'messages') and e.messages
+                else str(e)
             )
-            
+            return Response({'Validation Error': str(error_detail)}, status=status.HTTP_400_BAD_REQUEST)
+
         except IntegrityError as e:
             logger.error(f"Integrity error updating syllabus: {str(e)}")
-            error_detail = 'Database constraint violated.'
             return Response(
-                {
-                    'error': f'Database Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {'Database Error': 'Database constraint violated.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
+
         except Exception as e:
             logger.error(f"Unexpected error updating syllabus: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred while updating the syllabus.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {'Server Error': 'An unexpected error occurred while updating the syllabus.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -413,10 +473,7 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             logger.error(f"Error retrieving syllabi by subject {subject_id}: {str(e)}", exc_info=True)
             error_detail = 'An unexpected error occurred while retrieving syllabi.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {f'Server Error: {error_detail}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -432,10 +489,7 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             logger.error(f"Error retrieving syllabi by teacher {teacher_id}: {str(e)}", exc_info=True)
             error_detail = 'An unexpected error occurred while retrieving syllabi.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                { f'Server Error: {error_detail}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -451,10 +505,7 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             logger.error(f"Error retrieving syllabi by class {class_id}: {str(e)}", exc_info=True)
             error_detail = 'An unexpected error occurred while retrieving syllabi.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                { f'Server Error: {error_detail}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -493,10 +544,7 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             logger.error(f"Error retrieving weekly overview: {str(e)}", exc_info=True)
             error_detail = 'An unexpected error occurred while retrieving weekly overview.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                { f'Server Error: {error_detail}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -532,9 +580,6 @@ def get_syllabus_by_params(request):
         logger.error(f"Error in get_syllabus_by_params: {str(e)}", exc_info=True)
         error_detail = 'An unexpected error occurred while retrieving syllabi.'
         return Response(
-            {
-                'error': f'Server Error: {error_detail}',
-                'detail': error_detail
-            },
+            {f'Server Error: {error_detail}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

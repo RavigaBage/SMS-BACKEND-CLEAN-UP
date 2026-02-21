@@ -18,6 +18,8 @@ from .services import InvoiceService, PaymentService
 from apps.accounts.permissions import CanManageFinance
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 import logging
+import uuid
+from rest_framework.views import APIView
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 class FeeStructureViewSet(viewsets.ModelViewSet):
     """ViewSet for FeeStructure management"""
     
-    queryset = FeeStructure.objects.select_related('academic_year', 'class_obj').all()
+    queryset = FeeStructure.objects.select_related('class_obj').all()
     serializer_class = FeeStructureSerializer
     permission_classes = [IsAuthenticated, CanManageFinance]
     
@@ -33,10 +35,10 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         
         # Filter by academic year
-        academic_year_id = self.request.query_params.get('academic_year_id', None)
-        if academic_year_id:
-            queryset = queryset.filter(academic_year_id=academic_year_id)
-        
+        academic_year = self.request.query_params.get('academic_year', None)
+        if academic_year:
+            queryset = queryset.filter(academic_year=academic_year)
+                
         # Filter by class
         class_id = self.request.query_params.get('class_id', None)
         if class_id:
@@ -139,11 +141,31 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+# views.py
+
+
+
+class GenerateInvoiceView(APIView):
+    def post(self, request):
+        service = InvoiceService()
+        try:
+            invoice = service.generate_invoice_for_student(
+                student_id=request.data.get('student_id'),
+                academic_year=request.data.get('academic_year'),
+                term=request.data.get('term'),
+                generated_by=request.user,
+                due_days=request.data.get('due_days', 30)
+            )
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = InvoiceSerializer(invoice)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class InvoiceViewSet(viewsets.ModelViewSet):
     """ViewSet for Invoice management"""
     
-    queryset = Invoice.objects.select_related('student', 'academic_year', 'generated_by').prefetch_related('items').all()
+    queryset = Invoice.objects.select_related('student','generated_by').prefetch_related('items').all()
     serializer_class = InvoiceSerializer
     permission_classes = [IsAuthenticated, CanManageFinance]
     
@@ -156,9 +178,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(student_id=student_id)
         
         # Filter by academic year
-        academic_year_id = self.request.query_params.get('academic_year_id', None)
-        if academic_year_id:
-            queryset = queryset.filter(academic_year_id=academic_year_id)
+        academic_year = self.request.query_params.get('academic_year', None)
+        if academic_year:
+            queryset = queryset.filter(academic_year=academic_year)
+                
         
         # Filter by term
         term = self.request.query_params.get('term', None)
@@ -207,6 +230,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 generated_by=request.user,
                 due_days=due_days
             )
+            
             
             serializer = InvoiceSerializer(invoice)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -302,6 +326,28 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
+    def save(self, *args, **kwargs):
+        if self.total_amount is None:
+            raise ValueError("total_amount must be set before saving an Invoice.")
+        
+        # Auto-calculate balance
+        self.balance = self.total_amount - self.amount_paid
+
+        # Auto-update status
+        if self.amount_paid >= self.total_amount:
+            self.status = self.InvoiceStatus.PAID
+        elif self.amount_paid > 0:
+            self.status = self.InvoiceStatus.PARTIAL
+
+        if not self.invoice_number:
+            while True:
+                number = str(uuid.uuid4())[:8].upper()
+                if not Invoice.objects.filter(invoice_number=number).exists():
+                    self.invoice_number = number
+                    break
+
+        super().save(*args, **kwargs)
+
     @action(detail=True, methods=['get'])
     def payment_history(self, request, pk=None):
         """Get payment history for an invoice"""

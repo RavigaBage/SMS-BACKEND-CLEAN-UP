@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import transaction,models
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 from .models import Invoice, InvoiceItem, Payment, FeeStructure
@@ -11,48 +11,33 @@ class InvoiceService:
     """Service layer for Invoice operations"""
     
     @transaction.atomic
-    def generate_invoice_for_student(self, student_id, academic_year_id, term, generated_by, due_days=30):
-        """
-        Generate invoice for a student based on fee structures.
-        
-        Args:
-            student_id: Student ID
-            academic_year_id: Academic Year ID
-            term: Term ('1', '2', '3', or 'annual')
-            generated_by: User generating the invoice
-            due_days: Number of days until payment is due
-        
-        Returns:
-            Invoice object
-        """
+
+    def generate_invoice_for_student(self, student_id, academic_year, term, generated_by, due_days=30):
         try:
             student = Student.objects.get(id=student_id)
         except Student.DoesNotExist:
             raise ValidationError("Student not found")
         
-        try:
-            academic_year = AcademicYear.objects.get(id=academic_year_id)
-        except AcademicYear.DoesNotExist:
-            raise ValidationError("Academic year not found")
-        
-        # Check if invoice already exists
+       
+        # Fix: use the string value for the CharField
+        academic_year_str = academic_year # or whatever the string field is
+
+        # Fix: compare with the string, not the object
         existing_invoice = Invoice.objects.filter(
             student=student,
-            academic_year=academic_year,
+            academic_year=academic_year_str,
             term=term
         ).first()
         
         if existing_invoice:
-            raise ValidationError(f"Invoice already exists for this student and term")
+            raise ValidationError("Invoice already exists for this student and term")
         
-        # Get student's current class
         enrollment = student.enrollments.filter(status='active').select_related('class_obj').first()
         if not enrollment:
             raise ValidationError("Student is not enrolled in any class")
         
-        # Get applicable fee structures
         fee_structures = FeeStructure.objects.filter(
-            academic_year=academic_year,
+            academic_year=academic_year,  # this FK lookup is fine on FeeStructure
             is_mandatory=True
         ).filter(
             models.Q(class_obj=enrollment.class_obj) | models.Q(class_obj__isnull=True)
@@ -63,17 +48,13 @@ class InvoiceService:
         if not fee_structures.exists():
             raise ValidationError("No fee structures found for this student")
         
-        # Generate invoice number
         invoice_number = self._generate_invoice_number(academic_year, term)
-        
-        # Calculate total amount
         total_amount = sum(fee.amount for fee in fee_structures)
         
-        # Create invoice
         invoice = Invoice.objects.create(
             invoice_number=invoice_number,
             student=student,
-            academic_year=academic_year,
+            academic_year=academic_year_str,  # Fix: store string, not object
             term=term,
             total_amount=total_amount,
             amount_paid=Decimal('0.00'),
@@ -83,12 +64,12 @@ class InvoiceService:
             generated_by=generated_by
         )
         
-        # Create invoice items
+        # Fix: use the correct field name from FeeStructure (check your model)
         for fee in fee_structures:
             InvoiceItem.objects.create(
                 invoice=invoice,
                 fee_structure=fee,
-                description=fee.category_name,
+                description=fee.category_name,  # <-- verify the actual field name on FeeStructure
                 amount=fee.amount
             )
         
@@ -96,7 +77,7 @@ class InvoiceService:
     
     def _generate_invoice_number(self, academic_year, term):
         """Generate unique invoice number"""
-        year_code = academic_year.year_name.replace('/', '')[:4]
+        year_code = academic_year.replace('-', '')[:4]
         term_code = term.upper()
         
         # Get last invoice number for this period

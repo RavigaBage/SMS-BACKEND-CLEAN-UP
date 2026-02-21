@@ -106,18 +106,14 @@ class TeacherAdmin(admin.ModelAdmin):
         'export_teachers_csv'
     ]
     
-    # Custom methods for list display
-    
+    # ─── Custom list display methods ──────────────────────────────────────────
+
     @admin.display(description='Teacher Name', ordering='last_name')
     def full_name_link(self, obj):
         """Display full name as clickable link"""
         url = reverse('admin:teachers_teacher_change', args=[obj.pk])
-        return format_html(
-            '<a href="{}">{}</a>',
-            url,
-            obj.full_name
-        )
-    
+        return format_html('<a href="{}">{}</a>', url, obj.full_name)
+
     @admin.display(description='User Account', ordering='user__username')
     def user_link(self, obj):
         """Display user as clickable link"""
@@ -129,31 +125,35 @@ class TeacherAdmin(admin.ModelAdmin):
                 obj.user.username
             )
         return '-'
-    
-    @admin.display(description='Subjects', ordering='subject_count')
+
+    @admin.display(description='Subjects')
     def subject_count(self, obj):
-        """Display count of assigned subjects"""
+        """Display count of assigned subjects as a coloured badge"""
         count = obj.subjects.count()
-        if count > 0:
-            return format_html(
-                '<span style="background-color: #28a745; color: white; padding: 3px 8px; border-radius: 3px;">{}</span>',
-                count
-            )
+        color = '#28a745' if count > 0 else '#6c757d'
         return format_html(
-            '<span style="background-color: #6c757d; color: white; padding: 3px 8px; border-radius: 3px;">0</span>'
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px;">{}</span>',
+            color,
+            count,
         )
-    
-    @admin.display(description='Status', ordering='is_active', boolean=True)
+
+    # ✅ FIX: removed boolean=True — this method returns HTML, not True/False/None.
+    #    boolean=True tells Django to render the return value as a tick/cross icon,
+    #    which requires the value to be exactly True, False, or None. Passing an
+    #    HTML string caused the KeyError seen in the traceback.
+    @admin.display(description='Status', ordering='is_active')
     def is_active_badge(self, obj):
-        """Display active status as colored badge"""
         if obj.is_active:
-            return format_html(
-                '<span style="background-color: #28a745; color: white; padding: 3px 10px; border-radius: 3px; font-weight: bold;">✓ Active</span>'
-            )
+            color, label = '#28a745', 'Active'
+        else:
+            color, label = '#dc3545', 'Inactive'
         return format_html(
-            '<span style="background-color: #dc3545; color: white; padding: 3px 10px; border-radius: 3px; font-weight: bold;">✗ Inactive</span>'
+            '<span style="background-color: {}; color: white; padding: 3px 10px; '
+            'border-radius: 3px; font-weight: bold;">{}</span>',
+            color, label   # ← these are the required args
         )
-    
+
     @admin.display(description='Assigned By', ordering='assigned_by__username')
     def assigned_by_link(self, obj):
         """Display assigned_by user as clickable link"""
@@ -165,57 +165,37 @@ class TeacherAdmin(admin.ModelAdmin):
                 obj.assigned_by.username
             )
         return '-'
-    
-    # Custom actions
-    
+
+    # ─── Custom actions ───────────────────────────────────────────────────────
+
     @admin.action(description='✓ Activate selected teachers')
     def activate_teachers(self, request, queryset):
-        """Activate selected teachers"""
         updated = queryset.update(is_active=True)
-        self.message_user(
-            request,
-            f'{updated} teacher(s) activated successfully.',
-            level='success'
-        )
-    
+        self.message_user(request, f'{updated} teacher(s) activated successfully.', level='success')
+
     @admin.action(description='✗ Deactivate selected teachers')
     def deactivate_teachers(self, request, queryset):
-        """Deactivate selected teachers"""
         updated = queryset.update(is_active=False)
-        self.message_user(
-            request,
-            f'{updated} teacher(s) deactivated successfully.',
-            level='warning'
-        )
-    
+        self.message_user(request, f'{updated} teacher(s) deactivated successfully.', level='warning')
+
     @admin.action(description='📥 Export to CSV')
     def export_teachers_csv(self, request, queryset):
-        """Export selected teachers to CSV"""
         import csv
         from django.http import HttpResponse
         from datetime import datetime
-        
+
         response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = f'attachment; filename="teachers_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
-        
+        response['Content-Disposition'] = (
+            f'attachment; filename="teachers_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        )
+
         writer = csv.writer(response)
         writer.writerow([
-            'ID',
-            'First Name',
-            'Last Name',
-            'Username',
-            'Email',
-            'Specialization',
-            'Subjects',
-            'Qualifications',
-            'Years of Experience',
-            'Phone Number',
-            'Emergency Contact',
-            'Status',
-            'Date Joined',
-            'Assigned By'
+            'ID', 'First Name', 'Last Name', 'Username', 'Email',
+            'Specialization', 'Subjects', 'Qualifications', 'Years of Experience',
+            'Phone Number', 'Emergency Contact', 'Status', 'Date Joined', 'Assigned By'
         ])
-        
+
         for teacher in queryset.select_related('user', 'assigned_by').prefetch_related('subjects'):
             writer.writerow([
                 teacher.id,
@@ -233,54 +213,51 @@ class TeacherAdmin(admin.ModelAdmin):
                 teacher.date_joined.strftime('%Y-%m-%d') if teacher.date_joined else '',
                 teacher.assigned_by.username if teacher.assigned_by else ''
             ])
-        
+
         self.message_user(
             request,
             f'{queryset.count()} teacher(s) exported to CSV successfully.',
             level='success'
         )
-        
         return response
-    
-    # Override queryset to optimize queries
+
+    # ─── Queryset optimisation ────────────────────────────────────────────────
+
     def get_queryset(self, request):
-        """Optimize queryset with select_related and prefetch_related"""
         queryset = super().get_queryset(request)
-        queryset = queryset.select_related('user', 'assigned_by')
-        queryset = queryset.prefetch_related('subjects')
-        queryset = queryset.annotate(subject_count=Count('subjects'))
-        return queryset
-    
-    # Customize form behavior
+        return (
+            queryset
+            .select_related('user', 'assigned_by')
+            .prefetch_related('subjects')
+            .annotate(subject_count=Count('subjects'))
+        )
+
+    # ─── Save / form hooks ────────────────────────────────────────────────────
+
     def save_model(self, request, obj, form, change):
-        """Custom save behavior"""
-        # Set assigned_by if creating new teacher
         if not change and not obj.assigned_by:
             obj.assigned_by = request.user
-        
-        # Sync names with user if not provided
+
         if obj.user:
             if not obj.first_name and obj.user.first_name:
                 obj.first_name = obj.user.first_name
             if not obj.last_name and obj.user.last_name:
                 obj.last_name = obj.user.last_name
-        
+
         super().save_model(request, obj, form, change)
-        
-        # Log the action
         action = 'updated' if change else 'created'
-        self.message_user(
-            request,
-            f'Teacher "{obj.full_name}" {action} successfully.',
-            level='success'
-        )
-    
-    # Add custom view in admin
+        self.message_user(request, f'Teacher "{obj.full_name}" {action} successfully.', level='success')
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if 'user' in form.base_fields:
+            form.base_fields['user'].help_text = 'Select a user with "Teacher" role'
+        return form
+
+    # ─── Custom URLs ──────────────────────────────────────────────────────────
+
     def get_urls(self):
-        """Add custom URLs"""
-        urls = super().get_urls()
         from django.urls import path
-        
         custom_urls = [
             path(
                 '<int:teacher_id>/workload/',
@@ -288,88 +265,58 @@ class TeacherAdmin(admin.ModelAdmin):
                 name='teacher_workload'
             ),
         ]
-        return custom_urls + urls
-    
+        return custom_urls + super().get_urls()
+
     def teacher_workload_view(self, request, teacher_id):
-        """Custom view to display teacher workload"""
         from django.shortcuts import render, get_object_or_404
-        
         teacher = get_object_or_404(Teacher, pk=teacher_id)
-        assigned_classes = teacher.get_assigned_classes()
-        subject_assignments = teacher.get_subject_assignments()
-        
         context = {
             'teacher': teacher,
-            'assigned_classes': assigned_classes,
-            'subject_assignments': subject_assignments,
-            'total_workload': assigned_classes.count() + subject_assignments.count(),
+            'assigned_classes': teacher.get_assigned_classes(),
+            'subject_assignments': teacher.get_subject_assignments(),
+            'total_workload': (
+                teacher.get_assigned_classes().count()
+                + teacher.get_subject_assignments().count()
+            ),
             'title': f'Workload - {teacher.full_name}',
             'site_header': self.admin_site.site_header,
             'site_title': self.admin_site.site_title,
         }
-        
         return render(request, 'admin/teacher_workload.html', context)
-    
-    # Customize change form
+
     def change_view(self, request, object_id, form_url='', extra_context=None):
-        """Customize the change form view"""
         extra_context = extra_context or {}
-        
-        # Add workload information to context
         teacher = self.get_object(request, object_id)
         if teacher:
             extra_context['assigned_classes_count'] = teacher.get_assigned_classes().count()
             extra_context['subject_assignments_count'] = teacher.get_subject_assignments().count()
             extra_context['show_workload_link'] = True
-        
         return super().change_view(request, object_id, form_url, extra_context)
-    
-    # Form validation
-    def get_form(self, request, obj=None, **kwargs):
-        """Customize form"""
-        form = super().get_form(request, obj, **kwargs)
-        
-        # Add help text for user field
-        if 'user' in form.base_fields:
-            form.base_fields['user'].help_text = 'Select a user with "Teacher" role'
-        
-        return form
 
 
-# Optional: Inline admin for displaying teachers in User admin
+# ─── Optional inline for User admin ──────────────────────────────────────────
+
 class TeacherInline(admin.StackedInline):
     """Inline admin for Teacher in User admin"""
     model = Teacher
     can_delete = False
     verbose_name = 'Teacher Profile'
     verbose_name_plural = 'Teacher Profile'
-    
+
     fieldsets = (
         ('Teaching Information', {
             'fields': (
-                'first_name',
-                'last_name',
-                'specialization',
-                'subjects',
-                'qualifications',
-                'years_of_experience',
-                'phone_number',
-                'emergency_contact',
-                'is_active'
+                'first_name', 'last_name', 'specialization', 'subjects',
+                'qualifications', 'years_of_experience',
+                'phone_number', 'emergency_contact', 'is_active'
             )
         }),
     )
-    
+
     filter_horizontal = ['subjects']
-    
+
     def has_add_permission(self, request, obj=None):
-        """Only allow adding if user is a teacher"""
         if obj and obj.role == 'teacher' and not hasattr(obj, 'teacher_profile'):
             return True
         return False
 
-
-# To use the inline, add this to your User admin in accounts/admin.py:
-# from apps.teachers.admin import TeacherInline
-# class UserAdmin(admin.ModelAdmin):
-#     inlines = [TeacherInline]

@@ -8,8 +8,12 @@ from django.db import IntegrityError
 from .models import Student, Parent, StudentParent, StudentAttendance
 from .serializers import (
     StudentSerializer, StudentCreateSerializer, StudentUpdateSerializer,
-    ParentSerializer, StudentParentSerializer, StudentDetailSerializer, StudentAttendanceSerializer
+    ParentSerializer, StudentParentSerializer, StudentDetailSerializer,
+    StudentAttendanceSerializer, ParentAccessSerializer
 )
+from apps.attendance.models import Attendance  # adjust import path
+from apps.attendance.serializers import AttendanceSerializer  # adjust import path
+
 from apps.grades.serializers import StudentMinimalSerializer, StudentTranscriptSerializer
 from .services import StudentService, ParentService
 from apps.accounts.permissions import CanManageStudents, IsAdminOrHeadmaster
@@ -407,6 +411,28 @@ class ParentViewSet(viewsets.ModelViewSet):
             )
         
         return queryset
+
+    @action(detail=False, methods=['get'], url_path='app-access')
+    def app_access(self, request):
+        """
+        List parent app-access rows with latest invite details for frontend app-access page.
+        """
+        queryset = (
+            self.get_queryset()
+            .select_related('user')
+            .prefetch_related(
+                'student_links__student',
+                'invites',
+            )
+            .order_by('last_name', 'first_name')
+        )
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = ParentAccessSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = ParentAccessSerializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     def create(self, request, *args, **kwargs):
         """Create parent with exception handling"""
@@ -638,7 +664,89 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status_filter)
         
         return queryset
-    
+    @action(detail=False, methods=['post'], url_path='bulk')
+    def bulk_attendance(self, request):
+
+        records = request.data.get('attendance_records', [])
+
+        if not records:
+            return Response(
+                {'error': 'attendance_records is required and cannot be empty.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not isinstance(records, list):
+            return Response(
+                {'error': 'attendance_records must be a list.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        created    = []
+        updated    = []
+        errors     = []
+
+        for index, record in enumerate(records):
+            student_id      = record.get('student_id')
+            attendance_date = record.get('attendance_date')
+            att_status      = record.get('status', 'present')
+            remarks         = record.get('remarks', '')
+
+            # ── Per-record validation ────────────────────────────────────────────
+            if not student_id:
+                errors.append({'index': index, 'error': 'student_id is required.'})
+                continue
+
+            if not attendance_date:
+                errors.append({'index': index, 'student_id': student_id, 'error': 'attendance_date is required.'})
+                continue
+
+            try:
+                student = Student.objects.get(pk=student_id)
+            except Student.DoesNotExist:
+                errors.append({'index': index, 'student_id': student_id, 'error': f'Student {student_id} does not exist.'})
+                continue
+
+            try:
+                # update_or_create so re-submitting the same date just updates
+                attendance, was_created = Attendance.objects.update_or_create(
+                    student=student,
+                    attendance_date=attendance_date,
+                    defaults={
+                        'status':  att_status,
+                        'remarks': remarks,
+                        'recorded_by': request.user,
+                    }
+                )
+
+                serialized = AttendanceSerializer(attendance).data
+                if was_created:
+                    created.append(serialized)
+                else:
+                    updated.append(serialized)
+
+            except Exception as e:
+                logger.error(f"Error saving attendance for student {student_id}: {e}", exc_info=True)
+                errors.append({'index': index, 'student_id': student_id, 'error': str(e)})
+
+        # ── Return a full summary so the frontend knows exactly what happened ────
+        response_status = status.HTTP_207_MULTI_STATUS if errors else status.HTTP_201_CREATED
+
+        return Response(
+            {
+                'summary': {
+                    'total':   len(records),
+                    'created': len(created),
+                    'updated': len(updated),
+                    'failed':  len(errors),
+                },
+                'created': created,
+                'updated': updated,
+                'errors':  errors,
+            },
+            status=response_status
+        )
+
+
     def create(self, request, *args, **kwargs):
         """Create attendance with exception handling"""
         try:

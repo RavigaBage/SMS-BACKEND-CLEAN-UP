@@ -292,6 +292,72 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
     serializer_class = SalaryPaymentSerializer
     permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
     
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrHeadmaster])
+    def process_all(self, request):
+       
+        payment_period = request.data.get('payment_period')
+
+        if not payment_period:
+            return Response(
+                {'error': 'Validation Error', 'detail': 'payment_period is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        active_staff = Staff.objects.filter(is_active=True)
+        if not active_staff.exists():
+            return Response(
+                {'error': 'Validation Error', 'detail': 'No active staff found'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        service = SalaryService()
+        results = []
+
+        for staff in active_staff:
+            try:
+                salary_payment = service.process_monthly_salary(
+                    staff_id=staff.id,
+                    payment_period=payment_period,
+                    processed_by=request.user,
+                )
+                results.append({
+                    'staff_id':   staff.id,
+                    'staff_name': staff.full_name,
+                    'status':     'ok',
+                    'payment_id': salary_payment.id,
+                })
+            except ValidationError as e:
+                # Salary already processed, no salary structure, etc. — skip gracefully
+                results.append({
+                    'staff_id':   staff.id,
+                    'staff_name': staff.full_name,
+                    'status':     'skipped',
+                    'reason':     e.messages[0] if hasattr(e, 'messages') and e.messages else str(e),
+                })
+            except Exception as e:
+                logger.error(f"Unexpected error processing salary for staff {staff.id}: {e}", exc_info=True)
+                results.append({
+                    'staff_id':   staff.id,
+                    'staff_name': staff.full_name,
+                    'status':     'error',
+                    'reason':     str(e),
+                })
+
+        processed = sum(1 for r in results if r['status'] == 'ok')
+        skipped   = sum(1 for r in results if r['status'] == 'skipped')
+        errors    = sum(1 for r in results if r['status'] == 'error')
+
+        return Response(
+            {
+                'payment_period': payment_period,
+                'processed':      processed,
+                'skipped':        skipped,
+                'errors':         errors,
+                'results':        results,
+            },
+            status=status.HTTP_200_OK,
+        )
+    
     def get_queryset(self):
         queryset = super().get_queryset()
         

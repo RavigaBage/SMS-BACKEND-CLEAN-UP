@@ -37,7 +37,7 @@ class Class(models.Model):
     class_name = models.CharField(max_length=50, help_text="e.g., 'Grade 5A'")
     grade_level = models.IntegerField(help_text="1-12 or your grading system")
     section = models.CharField(max_length=10, blank=True, help_text="A, B, C, etc.")
-    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name='classes')
+    academic_year = models.CharField(max_length=10,blank=True, help_text="2025-2026")
     class_teacher = models.ForeignKey(
         Teacher,
         on_delete=models.SET_NULL,
@@ -58,7 +58,7 @@ class Class(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.class_name} ({self.academic_year.year_name})"
+        return f"{self.class_name} ({self.academic_year})"
     
     @property
     def current_enrollment(self):

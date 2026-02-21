@@ -11,7 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
-
+from decouple import config
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -37,9 +37,28 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'corsheaders',
+    'django_filters',
+    'drf_spectacular',
+    'django_extensions',
+    'apps.accounts',
+    'apps.staff',
+    'apps.students',
+    'apps.academic',
+    'apps.grades',
+    'apps.attendance',
+    'apps.finance',
+    'apps.timetable',
+    'apps.teachers',
+    'apps.summary',
+    'apps.schoolapp',
+    'apps.settings',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -116,3 +135,27 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend'
+)
+
+# ─── SMTP Configuration (Gmail) ───────────────────────────────────────────────
+# Only used when EMAIL_BACKEND = smtp.EmailBackend
+# For Gmail: enable 2FA on your Google account, then create an
+# "App Password" at https://myaccount.google.com/apppasswords
+# Use that 16-character app password here — NOT your real Gmail password.
+
+EMAIL_HOST          = config('EMAIL_HOST',     default='smtp.gmail.com')
+EMAIL_PORT          = config('EMAIL_PORT',     default=587,   cast=int)
+EMAIL_USE_TLS       = config('EMAIL_USE_TLS',  default=True,  cast=bool)
+EMAIL_HOST_USER     = config('EMAIL_HOST_USER',     default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL  = config(
+    'DEFAULT_FROM_EMAIL',
+    default='Ayaana School Portal <no-reply@ayaana.com>'
+)
+
+# ─── App name used in email templates ────────────────────────────────────────
+SCHOOL_NAME = config('SCHOOL_NAME', default='Ayaana School')

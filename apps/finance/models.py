@@ -3,7 +3,7 @@ from decimal import Decimal
 from apps.students.models import Student
 from apps.academic.models import AcademicYear, Class
 from apps.accounts.models import User
-
+import uuid
 
 class FeeStructure(models.Model):
     """Fee structure configuration"""
@@ -19,7 +19,7 @@ class FeeStructure(models.Model):
         TERM_3 = '3', 'Term 3'
         ALL = 'all', 'All Terms'
  
-    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name='fee_structures')
+    academic_year = models.CharField(max_length=20,null=True, blank=True)
     class_obj = models.ForeignKey(
         Class,
         on_delete=models.CASCADE,
@@ -66,7 +66,7 @@ class Invoice(models.Model):
     
     invoice_number = models.CharField(max_length=50, unique=True)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='invoices')
-    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name='invoices')
+    academic_year = models.CharField(max_length=20, null=True,blank=True) 
     term = models.CharField(max_length=10, choices=Term.choices)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -105,13 +105,19 @@ class Invoice(models.Model):
             self.status = self.InvoiceStatus.PAID
         elif self.amount_paid > 0:
             self.status = self.InvoiceStatus.PARTIAL
+        if not self.invoice_number:
+            while True:
+                # Generate a random number or string
+                number = str(uuid.uuid4())[:8].upper()  # e.g., 'A1B2C3D4'
+                if not Invoice.objects.filter(invoice_number=number).exists():
+                    self.invoice_number = number
+                    break
 
         super().save(*args, **kwargs)
 
 class InvoiceItem(models.Model):
     """Line items in an invoice"""
 
-    
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='items')
     fee_structure = models.ForeignKey(
         FeeStructure,

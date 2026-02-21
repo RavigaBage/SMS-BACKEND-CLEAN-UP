@@ -1,0 +1,146 @@
+<!-- templates/emails/parent_invite.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Your Ayaana Invite Code</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f6f6f8;font-family:'Segoe UI',Arial,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f8;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0"
+               style="background:#ffffff;border-radius:16px;overflow:hidden;
+                      box-shadow:0 4px 24px rgba(0,0,0,0.07);max-width:600px;width:100%;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1f3889 0%,#2d52c4 100%);
+                        padding:36px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;
+                          letter-spacing:-0.5px;">{{ school_name }}</h1>
+              <p style="margin:8px 0 0;color:rgba(255,255,255,0.75);font-size:14px;">
+                Parent Portal Access
+              </p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px 40px 20px;">
+
+              <p style="margin:0 0 8px;color:#64748b;font-size:14px;font-weight:500;">
+                Dear {{ parent_name }},
+              </p>
+              <p style="margin:0 0 24px;color:#0f172a;font-size:16px;line-height:1.6;">
+                You have been invited to access the <strong>{{ school_name }} Parent Portal</strong>
+                on the Ayaana app. Use the invite code below to create your account and
+                stay connected with your child's progress.
+              </p>
+
+              <!-- Invite Code Box -->
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="background:#f1f5f9;border-radius:12px;border:2px dashed #2d52c4;
+                             margin-bottom:28px;">
+                <tr>
+                  <td style="padding:28px;text-align:center;">
+                    <p style="margin:0 0 8px;color:#64748b;font-size:12px;
+                               font-weight:700;letter-spacing:1px;text-transform:uppercase;">
+                      Your Invite Code
+                    </p>
+                    <p style="margin:0;color:#1f3889;font-size:36px;font-weight:900;
+                               letter-spacing:8px;font-family:'Courier New',monospace;">
+                      {{ invite_code }}
+                    </p>
+                    <p style="margin:12px 0 0;color:#94a3b8;font-size:12px;">
+                      Expires on <strong>{{ expires_at }}</strong>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Linked Wards -->
+              {% if wards %}
+              <p style="margin:0 0 10px;color:#0f172a;font-size:14px;font-weight:700;">
+                Your linked ward(s):
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                {% for ward in wards %}
+                <tr>
+                  <td style="padding:10px 14px;background:#f8fafc;border-radius:8px;
+                              margin-bottom:6px;display:block;border-left:3px solid #1f3889;">
+                    <span style="color:#0f172a;font-weight:600;font-size:14px;">
+                      {{ ward.first_name }} {{ ward.last_name }}
+                    </span>
+                    <span style="color:#64748b;font-size:12px;margin-left:8px;">
+                      {{ ward.admission_number }}
+                    </span>
+                  </td>
+                </tr>
+                {% if not forloop.last %}
+                <tr><td style="height:6px;"></td></tr>
+                {% endif %}
+                {% endfor %}
+              </table>
+              {% endif %}
+
+              <!-- Steps -->
+              <p style="margin:0 0 14px;color:#0f172a;font-size:14px;font-weight:700;">
+                How to get started:
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+                {% for step in steps %}
+                <tr>
+                  <td width="32" valign="top" style="padding-bottom:12px;">
+                    <div style="width:26px;height:26px;border-radius:50%;background:#1f3889;
+                                color:white;font-size:12px;font-weight:800;text-align:center;
+                                line-height:26px;">{{ forloop.counter }}</div>
+                  </td>
+                  <td style="padding-bottom:12px;padding-left:10px;
+                              color:#334155;font-size:14px;line-height:1.5;vertical-align:top;">
+                    {{ step }}
+                  </td>
+                </tr>
+                {% endfor %}
+              </table>
+
+              <!-- Warning note -->
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="background:#fffbeb;border-radius:10px;
+                             border:1px solid rgba(245,158,11,0.3);margin-bottom:32px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0;color:#92400e;font-size:13px;line-height:1.5;">
+                      ⚠️ <strong>This code is for your use only.</strong>
+                      Do not share it with anyone. It expires on {{ expires_at }}
+                      and can only be used once.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 4px;color:#334155;font-size:14px;line-height:1.6;">
+                If you have any issues, please contact the school admin directly.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 40px;border-top:1px solid #e2e8f0;text-align:center;">
+              <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">
+                This email was sent by {{ school_name }}.<br/>
+                If you were not expecting this, please ignore it or contact the school.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

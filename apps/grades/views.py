@@ -132,82 +132,94 @@ class GradeViewSet(viewsets.ModelViewSet):
     def get_by_params(self, request):
         """Get or update grade by parameters with exception handling"""
         try:
-            student_id = request.query_params.get('student')
-            class_id = request.query_params.get('class')
-            subject_id = request.query_params.get('subject')
+            student_id    = request.query_params.get('student')
+            class_id      = request.query_params.get('class')
+            subject_id    = request.query_params.get('subject')
             academic_year = request.query_params.get('academic_year')
-            term = request.query_params.get('term')
+            term          = request.query_params.get('term')
 
             if not all([student_id, class_id, subject_id, academic_year, term]):
                 error_detail = "All parameters required: student, class, subject, academic_year, term"
                 return Response(
-                    {
-                        'error': f'Validation Error: {error_detail}',
-                        'detail': error_detail
-                    },
+                    {'error': f'Validation Error: {error_detail}', 'detail': error_detail},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            grade = get_object_or_404(
-                Grade,
+            grade = Grade.objects.filter(
                 student_id=student_id,
                 class_obj_id=class_id,
                 subject_id=subject_id,
                 academic_year=academic_year,
-                term=term
-            )
+                term=term,
+            ).first()
 
+            # ── GET ──────────────────────────────────────────────────────────────
             if request.method == 'GET':
+                if grade is None:
+                    return Response(
+                        {'grade': None},
+                        status=status.HTTP_200_OK
+                    )
                 ranks = AcademicReportGenerator.get_subject_ranks_dict(class_id, academic_year)
                 serializer = self.get_serializer(grade, context={'subject_ranks': ranks})
-                return Response(serializer.data)
-                
+                return Response({'grade': serializer.data})
+
+            # ── PATCH ─────────────────────────────────────────────────────────────
             elif request.method == 'PATCH':
-                serializer = self.get_serializer(grade, data=request.data, partial=True)
+                if grade is None:
+                    return Response(
+                        {'error': 'Not Found: No grade record found with the provided parameters.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                # ── sanitize nulls / empty strings → 0 for numeric fields ────────
+                NUMERIC_FIELDS = [
+                    'total_score',       'weighted_assessment',
+                    'weighted_test',     'weighted_exam',
+                    'assessment_score',  'assessment_total',
+                    'test_score',        'test_total',
+                    'exam_score',        'exam_total',
+                ]
+                data = request.data.copy()
+                for field in NUMERIC_FIELDS:
+                    if field in data and (data[field] is None or data[field] == ''):
+                        data[field] = 0
+
+                serializer = self.get_serializer(grade, data=data, partial=True)
                 serializer.is_valid(raise_exception=True)
                 serializer.save()
                 return Response(serializer.data)
-                
+
         except Grade.DoesNotExist:
-            logger.error(f"Grade not found with params: student={student_id}, class={class_id}, subject={subject_id}")
+            logger.error(
+                f"Grade not found: student={student_id}, class={class_id}, subject={subject_id}"
+            )
             error_detail = 'Grade not found with the provided parameters.'
             return Response(
-                {
-                    'error': f'Not Found: {error_detail}',
-                    'detail': error_detail
-                },
+                {'error': f'Not Found: {error_detail}', 'detail': error_detail},
                 status=status.HTTP_404_NOT_FOUND
             )
-            
+
         except ValidationError as e:
             logger.error(f"Validation error in get_by_params: {str(e)}")
-            
             if hasattr(e, 'message_dict'):
                 error_detail = e.message_dict
             elif hasattr(e, 'messages'):
                 error_detail = e.messages[0] if e.messages else str(e)
             else:
                 error_detail = str(e)
-            
             return Response(
-                {
-                    'error': f'Validation Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {'error': f'Validation Error: {error_detail}', 'detail': error_detail},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
+
         except Exception as e:
-            logger.error(f"Unexpected error in get_by_params: {str(e)}", exc_info=True)
+            logger.exception(f"Unexpected error in get_by_params: {str(e)}")
             error_detail = 'An unexpected error occurred while processing the grade.'
             return Response(
-                {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
-                },
+                {'error': f'Server Error: {error_detail}', 'detail': error_detail},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
     def get_serializer_context(self):
         context = super().get_serializer_context()
         

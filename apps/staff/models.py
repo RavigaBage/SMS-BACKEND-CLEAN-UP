@@ -120,6 +120,7 @@ class SalaryPayment(models.Model):
     class PaymentStatus(models.TextChoices):
         PENDING = 'pending', 'Pending'
         PAID = 'paid', 'Paid'
+        FAILED  = 'failed',  'Failed'
 
     
     

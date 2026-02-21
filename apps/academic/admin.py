@@ -21,8 +21,3 @@ class EnrollmentAdmin(admin.ModelAdmin):
     search_fields = ('student__user__username',)
 
 
-@admin.register(AcademicYear)
-class AcademicYearAdmin(admin.ModelAdmin):
-    list_display = ('year_name', 'start_date', 'end_date', 'is_current')
-    list_editable = ('is_current',) # Quickly toggle the current year from the list view
-    list_filter = ('is_current',)

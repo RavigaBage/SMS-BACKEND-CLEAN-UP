@@ -2,15 +2,26 @@ from rest_framework import serializers
 from .models import Attendance
 from apps.students.serializers import StudentSerializer
 from apps.academic.serializers import ClassSerializer
-
+from apps.students.models import Student
+from apps.academic.models import Class
 
 class AttendanceSerializer(serializers.ModelSerializer):
     """Serializer for Attendance model"""
     
     student = StudentSerializer(read_only=True)
-    student_id = serializers.IntegerField(write_only=True)
+    student_id = serializers.PrimaryKeyRelatedField(
+        queryset=Student.objects.all(),
+        source='student',
+        write_only=True
+    )
+    class_id = serializers.PrimaryKeyRelatedField(
+        queryset=Class.objects.all(),
+        source='class_obj',
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
     class_obj = ClassSerializer(read_only=True)
-    class_id = serializers.IntegerField(write_only=True, source='class_obj')
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     marked_by_username = serializers.CharField(source='marked_by.username', read_only=True, allow_null=True)
     

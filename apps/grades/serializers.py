@@ -44,6 +44,7 @@ class GradeSerializer(serializers.ModelSerializer):
         required=False
     )
     
+    
     # Computed fields
     percentage = serializers.SerializerMethodField()
     subject_rank = serializers.SerializerMethodField()
@@ -56,9 +57,7 @@ class GradeSerializer(serializers.ModelSerializer):
             'total_score', 'grade_letter', 'percentage', 'subject_rank', 
             'class_average', 'assessment_score','assessment_total','test_score','test_total',
             'exam_score','exam_total','weighted_assessment','weighted_test',
-            'weighted_exam',
-            # Add write-only fields
-            'student_id', 'subject_id', 'class_id'
+            'weighted_exam','remarks','student_id', 'subject_id', 'class_id'
         ]
 
     def get_percentage(self, obj):
@@ -110,6 +109,19 @@ class StudentTranscriptSerializer(serializers.ModelSerializer):
     class Meta:
         model = Student
         fields = ['id', 'first_name', 'last_name', 'admission_number', 'summary', 'grades']
+    def normalise_year(self,year: str) -> str:
+  
+        year = str(year).replace('/', '-').strip()
+        parts = year.split('-')
+        
+        if len(parts) == 2:
+            start = parts[0]          # "2025"
+            end   = parts[1]          # "26" or "2026"
+            if len(end) == 2:         # short form like "25-26"
+                end = start[:2] + end # "2025" + "26" → "2026"
+            return f"{start}-{end}"
+        
+        return year 
 
     def get_summary(self, obj):
         enrollment = obj.enrollments.first()
@@ -134,19 +146,28 @@ class StudentTranscriptSerializer(serializers.ModelSerializer):
         }
 
     def get_grades(self, obj):
-        enrollment = obj.enrollments.first()
-        if not enrollment: return []
-        
-        target_year = str(enrollment.class_obj.academic_year).split(' ')[0].replace('/', '-')
-        grades_queryset = obj.academic_grades.filter(academic_year=target_year)
+        enrollment = obj.enrollments.select_related('class_obj').first()
+        if not enrollment:
+            return []
 
-        # Context injection for high performance
-        s_map = AcademicReportGenerator.get_subject_ranks_dict(enrollment.class_obj_id, target_year)
+        target_year = self.normalise_year(enrollment.class_obj.academic_year)
+
+        # ✅ filter using all possible formats so nothing slips through
+        grades_queryset = obj.academic_grades.filter(
+            academic_year__in=[
+                target_year,                        # "2025-2026"
+                target_year[:4] + '-' + target_year[-2:],  # "2025-26"
+            ]
+        ).select_related('subject', 'student')
+
+        if not grades_queryset.exists():
+            return []
+
+        s_map   = AcademicReportGenerator.get_subject_ranks_dict(enrollment.class_obj_id, target_year)
         avg_map = AcademicReportGenerator.get_subject_averages(enrollment.class_obj_id, target_year)
 
         return GradeSerializer(
-            grades_queryset, 
-            many=True, 
+            grades_queryset, many=True,
             context={'subject_ranks': s_map, 'subject_averages': avg_map}
         ).data
 
