@@ -58,6 +58,7 @@ class AcademicYearViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
 class SubjectViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset         = Subject.objects.all().order_by("subject_code")
     serializer_class = SubjectSerializer
+    requires_teacher  = False
 
     def get_permissions(self):
         if self.action in ["create", "update", "partial_update", "destroy"]:
@@ -82,6 +83,8 @@ class SubjectViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
 
 class ClassViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset = Class.objects.select_related("class_teacher").all()
+    serializer_teacher_field = "class_teacher"
+    ownership_teacher_field  = "class_teacher"
 
     def get_serializer_class(self):
         return ClassDetailSerializer if self.action == "retrieve" else ClassSerializer
@@ -92,7 +95,7 @@ class ClassViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        qs           = Class.objects.all()
+        qs = Class.objects.all()
         academic_year = self.request.query_params.get("academic_year")
         grade_level  = self.request.query_params.get("grade_level")
         teacher_id   = self.request.query_params.get("teacher_id")
@@ -142,6 +145,7 @@ class ClassViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
 class EnrollmentViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset         = Enrollment.objects.select_related("student", "class_obj").all()
     serializer_class = EnrollmentSerializer
+    requires_teacher  = False
     permission_classes = [IsAuthenticated, CanManageStudents]
     filter_backends  = [filters.SearchFilter]
     search_fields    = ["student__first_name", "student__last_name", "student__middle_name"]

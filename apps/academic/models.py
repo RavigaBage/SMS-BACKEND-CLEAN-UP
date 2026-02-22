@@ -51,7 +51,7 @@ class Class(models.Model):
     class Meta:
         db_table = 'classes'
         verbose_name_plural = 'classes'
-        unique_together = ['class_name', 'academic_year']
+        unique_together = [("grade_level", "section", "academic_year")]
         ordering = ['grade_level', 'section']
         indexes = [
             models.Index(fields=['academic_year']),

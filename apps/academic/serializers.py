@@ -35,6 +35,25 @@ class ClassSerializer(serializers.ModelSerializer):
     class_teacher_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     academic_year_name = serializers.CharField(source='academic_year.year_name', read_only=True)
     current_enrollment = serializers.IntegerField(read_only=True)
+
+    def validate(self, attrs):
+        grade_level   = attrs.get("grade_level")
+        section       = attrs.get("section")
+        academic_year = attrs.get("academic_year")
+
+        qs = Class.objects.filter(
+            grade_level=grade_level,
+            section=section,
+            academic_year=academic_year
+        )
+        if self.instance:  # exclude self on updates
+            qs = qs.exclude(pk=self.instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError(
+                "A class with this grade level, section, and academic year already exists."
+            )
+        return attrs
     
     class Meta:
         model = Class

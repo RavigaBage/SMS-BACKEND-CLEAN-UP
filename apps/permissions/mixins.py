@@ -147,6 +147,8 @@ class SchoolWriteMixin:
 
     ownership_teacher_field = "teacher"
     ownership_class_field   = "class_obj"
+    serializer_teacher_field = "teacher" 
+    requires_teacher         = True 
 
     # ── ownership helpers ─────────────────────────────────────────────────────
 
@@ -186,34 +188,33 @@ class SchoolWriteMixin:
         return None
 
     # ── perform_create / perform_update: inject teacher from auth token ───────
-
     def perform_create(self, serializer):
-        """
-        For teachers: injects the real Teacher object from the auth token,
-        overriding anything the frontend sent.
-        For admins/headmasters: validates teacher was provided in payload,
-        then saves normally.
-        """
+        if not self.requires_teacher:       # ← skip teacher logic entirely
+            serializer.save()
+            return
+
         teacher = self._resolve_teacher_profile()
+        field = self.serializer_teacher_field
         if teacher is not None:
-            # Teacher role — always use the server-resolved profile
-            serializer.save(teacher=teacher)
+            serializer.save(**{field: teacher})
         else:
-            # Admin/headmaster — teacher must have been in the payload
-            if not serializer.validated_data.get("teacher"):
-                raise DRFValidationError({"teacher_id": "This field is required."})
+            if not serializer.validated_data.get(field):
+                raise DRFValidationError({field: "This field is required."})
             serializer.save()
 
     def perform_update(self, serializer):
-        """Same teacher injection on updates."""
-        teacher = self._resolve_teacher_profile()
-        if teacher is not None:
-            serializer.save(teacher=teacher)
-        else:
-            if not serializer.validated_data.get("teacher"):
-                raise DRFValidationError({"teacher_id": "This field is required."})
+        if not self.requires_teacher:       # ← skip teacher logic entirely
             serializer.save()
+            return
 
+        teacher = self._resolve_teacher_profile()
+        field = self.serializer_teacher_field
+        if teacher is not None:
+            serializer.save(**{field: teacher})
+        else:
+            if not serializer.validated_data.get(field):
+                raise DRFValidationError({field: "This field is required."})
+            serializer.save()
     # ── overridden CRUD methods ───────────────────────────────────────────────
 
     def create(self, request, *args, **kwargs):
