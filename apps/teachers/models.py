@@ -20,7 +20,6 @@ class Teacher(models.Model):
         help_text="Primary subject or area of expertise (e.g., Mathematics, Science)"
     )
     
-    # Many-to-Many relationship with subjects
     subjects = models.ManyToManyField(
         'academic.Subject', 
         related_name="teachers", 
@@ -28,11 +27,9 @@ class Teacher(models.Model):
         help_text="Subjects this teacher is qualified to teach"
     )
     
-    # Additional fields
     date_joined = models.DateField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
     
-    # Teacher qualifications
     qualifications = models.TextField(
         blank=True,
         help_text="Educational qualifications (e.g., B.Ed, M.Sc)"
@@ -42,11 +39,9 @@ class Teacher(models.Model):
         help_text="Total years of teaching experience"
     )
     
-    # Contact information
     phone_number = models.CharField(max_length=17, blank=True)
     emergency_contact = models.CharField(max_length=17, blank=True)
     
-    # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     assigned_by = models.ForeignKey(
@@ -89,7 +84,6 @@ class Teacher(models.Model):
     
     def save(self, *args, **kwargs):
         """Override save to sync with user model"""
-        # Sync names with user model if needed
         if self.user:
             if not self.first_name and self.user.first_name:
                 self.first_name = self.user.first_name

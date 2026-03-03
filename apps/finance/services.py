@@ -19,10 +19,8 @@ class InvoiceService:
             raise ValidationError("Student not found")
         
        
-        # Fix: use the string value for the CharField
-        academic_year_str = academic_year # or whatever the string field is
+        academic_year_str = academic_year
 
-        # Fix: compare with the string, not the object
         existing_invoice = Invoice.objects.filter(
             student=student,
             academic_year=academic_year_str,
@@ -37,7 +35,7 @@ class InvoiceService:
             raise ValidationError("Student is not enrolled in any class")
         
         fee_structures = FeeStructure.objects.filter(
-            academic_year=academic_year,  # this FK lookup is fine on FeeStructure
+            academic_year=academic_year,  
             is_mandatory=True
         ).filter(
             models.Q(class_obj=enrollment.class_obj) | models.Q(class_obj__isnull=True)
@@ -54,7 +52,7 @@ class InvoiceService:
         invoice = Invoice.objects.create(
             invoice_number=invoice_number,
             student=student,
-            academic_year=academic_year_str,  # Fix: store string, not object
+            academic_year=academic_year_str, 
             term=term,
             total_amount=total_amount,
             amount_paid=Decimal('0.00'),
@@ -64,12 +62,11 @@ class InvoiceService:
             generated_by=generated_by
         )
         
-        # Fix: use the correct field name from FeeStructure (check your model)
         for fee in fee_structures:
             InvoiceItem.objects.create(
                 invoice=invoice,
                 fee_structure=fee,
-                description=fee.category_name,  # <-- verify the actual field name on FeeStructure
+                description=fee.category_name, 
                 amount=fee.amount
             )
         
@@ -80,7 +77,6 @@ class InvoiceService:
         year_code = academic_year.replace('-', '')[:4]
         term_code = term.upper()
         
-        # Get last invoice number for this period
         last_invoice = Invoice.objects.filter(
             invoice_number__startswith=f"INV-{year_code}-{term_code}"
         ).order_by('-invoice_number').first()
@@ -101,7 +97,6 @@ class InvoiceService:
         except Class.DoesNotExist:
             raise ValidationError("Class not found")
         
-        # Get all active enrollments in this class
         enrollments = class_obj.enrollments.filter(status='active').select_related('student')
         
         invoices = []
@@ -151,17 +146,14 @@ class PaymentService:
         except Invoice.DoesNotExist:
             raise ValidationError("Invoice not found")
         
-        # Validate payment amount
         if amount_paid <= 0:
             raise ValidationError("Payment amount must be greater than zero")
         
         if amount_paid > invoice.balance:
             raise ValidationError(f"Payment amount ({amount_paid}) exceeds balance ({invoice.balance})")
         
-        # Generate payment number
         payment_number = self._generate_payment_number()
         
-        # Create payment record
         payment = Payment.objects.create(
             payment_number=payment_number,
             invoice=invoice,
@@ -171,7 +163,6 @@ class PaymentService:
             received_by=received_by
         )
         
-        # Invoice update is handled in Payment.save() method
         
         return payment
     
@@ -180,7 +171,6 @@ class PaymentService:
         today = datetime.now()
         date_code = today.strftime('%Y%m%d')
         
-        # Get last payment number for today
         last_payment = Payment.objects.filter(
             payment_number__startswith=f"PAY-{date_code}"
         ).order_by('-payment_number').first()

@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter
 from django.db.models import Sum, Q, Count
@@ -34,17 +35,14 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by academic year
         academic_year = self.request.query_params.get('academic_year', None)
         if academic_year:
             queryset = queryset.filter(academic_year=academic_year)
                 
-        # Filter by class
         class_id = self.request.query_params.get('class_id', None)
         if class_id:
             queryset = queryset.filter(Q(class_obj_id=class_id) | Q(class_obj__isnull=True))
         
-        # Filter by term
         term = self.request.query_params.get('term', None)
         if term:
             queryset = queryset.filter(Q(term=term) | Q(term='all'))
@@ -56,7 +54,7 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating fee structure: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -101,7 +99,7 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
         try:
             return super().update(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating fee structure: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -141,9 +139,6 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# views.py
-
-
 
 class GenerateInvoiceView(APIView):
     def post(self, request):
@@ -156,7 +151,7 @@ class GenerateInvoiceView(APIView):
                 generated_by=request.user,
                 due_days=request.data.get('due_days', 30)
             )
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = InvoiceSerializer(invoice)
@@ -172,28 +167,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by student
         student_id = self.request.query_params.get('student_id', None)
         if student_id:
             queryset = queryset.filter(student_id=student_id)
         
-        # Filter by academic year
         academic_year = self.request.query_params.get('academic_year', None)
         if academic_year:
             queryset = queryset.filter(academic_year=academic_year)
                 
         
-        # Filter by term
         term = self.request.query_params.get('term', None)
         if term:
             queryset = queryset.filter(term=term)
         
-        # Filter by status
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
-        # Filter overdue invoices
         overdue = self.request.query_params.get('overdue', None)
         if overdue and overdue.lower() == 'true':
             queryset = queryset.filter(
@@ -235,7 +225,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             serializer = InvoiceSerializer(invoice)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error generating invoice: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -297,7 +287,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'error_details': result['errors']
             }, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error bulk generating invoices: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -330,10 +320,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if self.total_amount is None:
             raise ValueError("total_amount must be set before saving an Invoice.")
         
-        # Auto-calculate balance
         self.balance = self.total_amount - self.amount_paid
 
-        # Auto-update status
         if self.amount_paid >= self.total_amount:
             self.status = self.InvoiceStatus.PAID
         elif self.amount_paid > 0:
@@ -385,7 +373,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         params = self.request.query_params
 
-        # Search (student name, invoice number, payment number)
         search = params.get("search")
         if search:
             queryset = queryset.filter(
@@ -395,17 +382,14 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 Q(payment_number__icontains=search)
             )
 
-        # Filter by student
         student_id = params.get("student_id")
         if student_id:
             queryset = queryset.filter(invoice__student_id=student_id)
 
-        # Payment method
         payment_method = params.get("payment_method")
         if payment_method:
             queryset = queryset.filter(payment_method=payment_method)
 
-        # Month filter (YYYY-MM)
         month = params.get("month")
         if month:
             year, month = month.split("-")
@@ -414,7 +398,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 payment_date__month=month
             )
 
-        # Date range
         start_date = params.get("start_date")
         end_date = params.get("end_date")
         if start_date and end_date:
@@ -440,7 +423,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
             response_serializer = PaymentSerializer(payment)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error recording payment: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -527,12 +510,10 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by category
         category = self.request.query_params.get('category', None)
         if category:
             queryset = queryset.filter(category=category)
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         if start_date and end_date:
@@ -545,7 +526,7 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating expenditure: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -586,7 +567,7 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
             )
     
     def perform_create(self, serializer):
-        # Generate expenditure number
+   
         today = datetime.now()
         date_code = today.strftime('%Y%m%d')
         
@@ -666,31 +647,26 @@ class FinancialDashboardViewSet(viewsets.ViewSet):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             
-            # Default to current month
             if not start_date or not end_date:
                 today = datetime.now().date()
                 start_date = today.replace(day=1)
                 end_date = today
             
-            # Revenue (payments received)
             payments = Payment.objects.filter(
                 payment_date__range=[start_date, end_date]
             )
             total_revenue = payments.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
             
-            # Expenditure
             expenditures = Expenditure.objects.filter(
                 transaction_date__range=[start_date, end_date]
             )
             total_expenditure = expenditures.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
             
-            # Outstanding fees
             outstanding_invoices = Invoice.objects.filter(
                 status__in=['unpaid', 'partial']
             )
             outstanding_fees = outstanding_invoices.aggregate(total=Sum('balance'))['total'] or Decimal('0.00')
             
-            # Invoice statistics
             paid_invoices = Invoice.objects.filter(status='paid').count()
             unpaid_invoices = Invoice.objects.filter(status='unpaid').count()
             partial_invoices = Invoice.objects.filter(status='partial').count()
@@ -734,12 +710,10 @@ class FinancialDashboardViewSet(viewsets.ViewSet):
                 else:
                     month_end = datetime(year, month + 1, 1).date() - timedelta(days=1)
                 
-                # Revenue
                 revenue = Payment.objects.filter(
                     payment_date__range=[month_start, month_end]
                 ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
                 
-                # Expenditure
                 expenditure = Expenditure.objects.filter(
                     transaction_date__range=[month_start, month_end]
                 ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')

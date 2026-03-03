@@ -97,18 +97,15 @@ class Invoice(models.Model):
         return f"Invoice {self.invoice_number} - {self.student.full_name}"
 
     def save(self, *args, **kwargs):
-        # Auto-calculate balance
         self.balance = self.total_amount - self.amount_paid
 
-        # Auto-update status
         if self.amount_paid >= self.total_amount:
             self.status = self.InvoiceStatus.PAID
         elif self.amount_paid > 0:
             self.status = self.InvoiceStatus.PARTIAL
         if not self.invoice_number:
             while True:
-                # Generate a random number or string
-                number = str(uuid.uuid4())[:8].upper()  # e.g., 'A1B2C3D4'
+                number = str(uuid.uuid4())[:8].upper()  
                 if not Invoice.objects.filter(invoice_number=number).exists():
                     self.invoice_number = number
                     break
@@ -178,7 +175,6 @@ class Payment(models.Model):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
 
-        # Update invoice amount_paid
         self.invoice.amount_paid = self.invoice.payments.aggregate(
             total=models.Sum('amount_paid')
         )['total'] or Decimal('0.00')
@@ -191,6 +187,7 @@ class Expenditure(models.Model):
     class Category(models.TextChoices):
         UTILITIES = 'utilities', 'Utilities'
         SUPPLIES = 'supplies', 'Supplies'
+        ACADEMIC = 'academic', 'academic'
         MAINTENANCE = 'maintenance', 'Maintenance'
         SALARIES = 'salaries', 'Salaries'
         TRANSPORT = 'transport', 'Transport'

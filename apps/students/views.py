@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
 from django.core.exceptions import ValidationError
@@ -11,8 +12,8 @@ from .serializers import (
     ParentSerializer, StudentParentSerializer, StudentDetailSerializer,
     StudentAttendanceSerializer, ParentAccessSerializer
 )
-from apps.attendance.models import Attendance  # adjust import path
-from apps.attendance.serializers import AttendanceSerializer  # adjust import path
+from apps.attendance.models import Attendance 
+from apps.attendance.serializers import AttendanceSerializer 
 
 from apps.grades.serializers import StudentMinimalSerializer, StudentTranscriptSerializer
 from .services import StudentService, ParentService
@@ -69,7 +70,6 @@ class StudentViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
-            # Prepare student data
             student_data = {
                 'admission_number': serializer.validated_data['admission_number'],
                 'first_name': serializer.validated_data['first_name'],
@@ -86,13 +86,10 @@ class StudentViewSet(viewsets.ModelViewSet):
                 'photo_url': serializer.validated_data.get('photo_url', ''),
             }
             
-            # Parent data
             parent_data_list = serializer.validated_data.get('parents', [])
             
-            # Class enrollment
             class_id = serializer.validated_data.get('class_id')
             
-            # Register student using Service Layer
             service = StudentService()
             result = service.register_student(
                 student_data=student_data,
@@ -104,7 +101,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             response_data = StudentDetailSerializer(result['student']).data
             return Response(response_data, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating student: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -156,7 +153,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             student = service.update_student(instance.id, serializer.validated_data)
             return Response(StudentSerializer(student).data)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating student: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -207,7 +204,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             parent = service.add_parent_to_student(student.id, parent_data)
             return Response(ParentSerializer(parent).data, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error adding parent to student {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -258,7 +255,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             from apps.academic.serializers import EnrollmentSerializer
             return Response(EnrollmentSerializer(enrollment).data)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error transferring student {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -345,7 +342,7 @@ class StudentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_204_NO_CONTENT
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error deleting student: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -384,7 +381,6 @@ class ParentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset().distinct()
         
-        # Search Logic
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -394,7 +390,6 @@ class ParentViewSet(viewsets.ModelViewSet):
                 Q(email__icontains=search)
             )
 
-        # Filter by Class
         class_id = self.request.query_params.get('class_id', None)
         if class_id:
             queryset = queryset.filter(
@@ -402,7 +397,6 @@ class ParentViewSet(viewsets.ModelViewSet):
                 student_links__student__enrollments__status="active"
             )
 
-        # Filter by Academic Year
         year_id = self.request.query_params.get('academic_year_id', None)
         if year_id:
             queryset = queryset.filter(
@@ -439,7 +433,7 @@ class ParentViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating parent: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -484,7 +478,7 @@ class ParentViewSet(viewsets.ModelViewSet):
         try:
             return super().update(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating parent: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -566,12 +560,10 @@ class StudentParentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by student
         student_id = self.request.query_params.get('student_id', None)
         if student_id:
             queryset = queryset.filter(student_id=student_id)
         
-        # Filter by parent
         parent_id = self.request.query_params.get('parent_id', None)
         if parent_id:
             queryset = queryset.filter(parent_id=parent_id)
@@ -583,7 +575,7 @@ class StudentParentViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating student-parent link: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -634,12 +626,10 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by Student ID
         student_id = self.request.query_params.get('student_id', None)
         if student_id:
             queryset = queryset.filter(student_id=student_id)
         
-        # Filter by search (Student name)
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -647,18 +637,15 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
                 Q(student__last_name__icontains=search)
             )
         
-        # Filter by specific date
         date = self.request.query_params.get('date', None)
         if date:
             queryset = queryset.filter(attendance_date=date)
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         if start_date and end_date:
             queryset = queryset.filter(attendance_date__range=[start_date, end_date])
         
-        # Filter by status
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -691,7 +678,6 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
             att_status      = record.get('status', 'present')
             remarks         = record.get('remarks', '')
 
-            # ── Per-record validation ────────────────────────────────────────────
             if not student_id:
                 errors.append({'index': index, 'error': 'student_id is required.'})
                 continue
@@ -707,7 +693,6 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
                 continue
 
             try:
-                # update_or_create so re-submitting the same date just updates
                 attendance, was_created = Attendance.objects.update_or_create(
                     student=student,
                     attendance_date=attendance_date,
@@ -728,7 +713,6 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
                 logger.error(f"Error saving attendance for student {student_id}: {e}", exc_info=True)
                 errors.append({'index': index, 'student_id': student_id, 'error': str(e)})
 
-        # ── Return a full summary so the frontend knows exactly what happened ────
         response_status = status.HTTP_207_MULTI_STATUS if errors else status.HTTP_201_CREATED
 
         return Response(
@@ -752,7 +736,7 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating attendance: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -797,7 +781,7 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
         try:
             return super().update(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating attendance: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -836,3 +820,4 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+

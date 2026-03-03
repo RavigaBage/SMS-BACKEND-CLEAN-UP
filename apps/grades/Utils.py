@@ -9,22 +9,21 @@ from django.db.models.functions import Rank
 
 class GradeCalculator:
     """Utility class for grade calculations"""
-    
-    # Grade scale configuration (can be customized per institution)
-    GRADE_SCALE = {
-        'A+': (90, 100),
-        'A': (85, 89.99),
-        'A-': (80, 84.99),
-        'B+': (75, 79.99),
-        'B': (70, 74.99),
-        'B-': (65, 69.99),
-        'C+': (60, 64.99),
-        'C': (55, 59.99),
-        'C-': (50, 54.99),
-        'D+': (45, 49.99),
-        'D': (40, 44.99),
-        'F': (0, 39.99)
-    }
+
+    GRADE_THRESHOLDS = [
+        ('A+', Decimal('90')),
+        ('A', Decimal('85')),
+        ('A-', Decimal('80')),
+        ('B+', Decimal('75')),
+        ('B', Decimal('70')),
+        ('B-', Decimal('65')),
+        ('C+', Decimal('60')),
+        ('C', Decimal('55')),
+        ('C-', Decimal('50')),
+        ('D+', Decimal('45')),
+        ('D', Decimal('40')),
+        ('F', Decimal('0')),
+    ]
     
     GRADE_POINTS = {
         'A+': 4.0, 'A': 4.0, 'A-': 3.7,
@@ -33,7 +32,6 @@ class GradeCalculator:
         'D+': 1.3, 'D': 1.0, 'F': 0.0
     }
     
-    # Weighting configuration (Assessment: 30%, Test: 20%, Exam: 50%)
     WEIGHTS = {
         'assessment': 30,
         'test': 20,
@@ -75,8 +73,9 @@ class GradeCalculator:
     @classmethod
     def get_grade_letter(cls, total_score: float) -> str:
         """Convert numerical score to letter grade"""
-        for letter, (min_score, max_score) in cls.GRADE_SCALE.items():
-            if min_score <= total_score <= max_score:
+        score = Decimal(str(total_score))
+        for letter, min_score in cls.GRADE_THRESHOLDS:
+            if score >= min_score:
                 return letter
         return 'F'
     
@@ -96,7 +95,7 @@ class GradeCalculator:
     @classmethod
     def get_grade_distribution(cls, grades: List[Grade]) -> Dict[str, int]:
         """Get count of each grade letter"""
-        distribution = {letter: 0 for letter in cls.GRADE_SCALE.keys()}
+        distribution = {letter: 0 for letter, _ in cls.GRADE_THRESHOLDS}
         
         for grade in grades:
             if grade.grade_letter in distribution:
@@ -113,7 +112,7 @@ class TranscriptGenerator:
         """
         Generate comprehensive transcript data for a student
         """
-        grades_query = student.grades.select_related('subject', 'class_obj')
+        grades_query = student.academic_grades.select_related('subject', 'class_obj')
         
         if academic_year:
             grades_query = grades_query.filter(academic_year=academic_year)
@@ -161,6 +160,8 @@ class TranscriptGenerator:
 class AcademicReportGenerator:
     """Generate various academic reports"""
     def get_grades(self, obj):
+        from .serializers import GradeSerializer
+
         enrollment = obj.enrollments.first()
         if not enrollment:
             return []
@@ -170,7 +171,6 @@ class AcademicReportGenerator:
 
         grades_queryset = obj.academic_grades.filter(academic_year=target_year)
         
-        # 1. Get subject-specific ranks
         s_map = AcademicReportGenerator.get_subject_ranks_dict(
             enrollment.class_obj_id, 
             target_year
@@ -267,13 +267,18 @@ class AcademicReportGenerator:
                 'gpa': gpa
             })
         
-        # Sort by average score (descending)
-        rankings.sort(key=lambda x: x['average_score'], reverse=True)
-        
-        # Add rank
+        rankings.sort(key=lambda x: (x['average_score'], x['gpa']), reverse=True)
+
+        previous_score = None
+        previous_rank = 0
         for idx, ranking in enumerate(rankings, 1):
-            ranking['rank'] = idx
-        
+            if previous_score is not None and ranking['average_score'] == previous_score:
+                ranking['rank'] = previous_rank
+            else:
+                ranking['rank'] = idx
+                previous_rank = idx
+                previous_score = ranking['average_score']
+
         return rankings
 
 
@@ -305,12 +310,10 @@ class AcademicReportGenerator:
             """
             Retrieves the rank, average, and GPA for a specific student in a class.
             """
-            # 1. Get the full list of rankings for the class
             all_rankings = AcademicReportGenerator.generate_class_ranking(
                 class_obj, academic_year, term
             )
             
-            # 2. Find the dictionary belonging to our student
             student_rank_data = next(
                 (item for item in all_rankings if item['student_id'] == student_id), 
                 None
@@ -336,7 +339,6 @@ class AcademicReportGenerator:
             from django.db.models import Avg, Window, F
             from django.db.models.functions import Rank
 
-            # Calculate average per student for this class/term
             rankings = Grade.objects.filter(
                 class_obj=class_obj,
                 academic_year=academic_year,
@@ -359,7 +361,6 @@ def validate_grade_data(grade_data: Dict) -> Tuple[bool, List[str]]:
     """
     errors = []
     
-    # Check that scores don't exceed totals
     if grade_data.get('assessment_score', 0) > grade_data.get('assessment_total', 0):
         errors.append("Assessment score cannot exceed assessment total")
     
@@ -369,7 +370,6 @@ def validate_grade_data(grade_data: Dict) -> Tuple[bool, List[str]]:
     if grade_data.get('exam_score', 0) > grade_data.get('exam_total', 0):
         errors.append("Exam score cannot exceed exam total")
     
-    # Check for negative values
     numeric_fields = [
         'assessment_score', 'assessment_total',
         'test_score', 'test_total',

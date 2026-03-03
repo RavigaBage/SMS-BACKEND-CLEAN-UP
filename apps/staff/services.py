@@ -30,14 +30,13 @@ class StaffService:
             Exception: For other errors
         """
         try:
-            # Validate permissions
             role = staff_data.get('staff_type', 'teacher')
             user_role_map = {
                 'teacher': User.Role.TEACHER,
                 'headmaster': User.Role.HEADMASTER,
                 'bursar': User.Role.BURSAR,
                 'admin_staff': User.Role.ADMIN,
-                'support_staff': User.Role.TEACHER,  # Support staff get teacher-level access
+                'support_staff': User.Role.TEACHER,
             }
             
             target_role = user_role_map.get(role, User.Role.TEACHER)
@@ -45,11 +44,9 @@ class StaffService:
             if created_by:
                 UserService.validate_role_permissions(created_by, target_role)
             
-            # Generate user data if not provided
             if not user_data:
                 user_data = {}
             
-            # Auto-generate username if not provided
             if 'username' not in user_data:
                 user_data['username'] = UserService.generate_username(
                     staff_data['first_name'],
@@ -57,21 +54,17 @@ class StaffService:
                     role
                 )
             
-            # Auto-generate email if not provided
             if 'email' not in user_data:
                 user_data['email'] = f"{user_data['username']}@school.com"
             
-            # Validate email uniqueness
             UserService.validate_email_unique(user_data['email'])
             
-            # Generate password if not provided
             if 'password' not in user_data:
                 user_data['password'] = UserService.generate_password()
                 generated_password = user_data['password']
             else:
                 generated_password = None
             
-            # Create User
             user = User.objects.create_user(
                 username=user_data['username'],
                 email=user_data['email'],
@@ -80,14 +73,14 @@ class StaffService:
                 created_by=created_by
             )
             
-            # Create Staff profile
+          
             staff = Staff.objects.create(
                 user=user,
                 first_name=staff_data['first_name'],
                 last_name=staff_data['last_name'],
                 date_of_birth=staff_data.get('date_of_birth'),
                 phone_number=staff_data.get('phone_number', ''),
-                email=user_data['email'],  # Duplicate for easy access
+                email=user_data['email'], 
                 address=staff_data.get('address', ''),
                 gender=staff_data.get('gender', ''),
                 staff_type=role,
@@ -98,7 +91,6 @@ class StaffService:
                 photo_url=staff_data.get('photo_url', '')
             )
             
-            # Create salary structure if provided
             if 'salary' in staff_data:
                 SalaryStructure.objects.create(
                     staff=staff,
@@ -151,12 +143,11 @@ class StaffService:
             raise ValidationError("Staff not found")
         
         try:
-            # Update Staff fields
+          
             for field, value in staff_data.items():
                 if field not in ['user', 'salary'] and hasattr(staff, field):
                     setattr(staff, field, value)
             
-            # Update email in both User and Staff if provided
             if 'email' in staff_data:
                 if staff_data['email'] != staff.user.email:
                     UserService.validate_email_unique(staff_data['email'])
@@ -198,7 +189,7 @@ class StaffService:
             raise ValidationError("Staff not found")
         
         try:
-            # Cannot deactivate yourself
+            
             if staff.user == deactivated_by:
                 raise ValidationError("You cannot deactivate your own account")
             
@@ -276,11 +267,10 @@ class SalaryService:
             raise ValidationError("Staff not found")
         
         try:
-            # Check if salary already processed for this period
+          
             if SalaryPayment.objects.filter(staff=staff, payment_period=payment_period).exists():
                 raise ValidationError(f"Salary already processed for {payment_period}")
             
-            # Get current salary structure
             salary_structure = SalaryStructure.objects.filter(
                 staff=staff,
                 effective_from__lte=datetime.now().date()
@@ -289,7 +279,7 @@ class SalaryService:
             if not salary_structure:
                 raise ValidationError("No salary structure found for this staff")
             
-            # Calculate salary components
+            
             base_salary = salary_structure.base_salary
             allowances = (
                 salary_structure.housing_allowance +
@@ -297,14 +287,11 @@ class SalaryService:
                 salary_structure.other_allowances
             )
             
-            # Calculate tax (simplified - 10% of gross)
             gross_salary = base_salary + allowances
             tax = gross_salary * 0.10
             
-            # Calculate net salary
             net_salary = gross_salary - tax
             
-            # Create salary payment record
             salary_payment = SalaryPayment.objects.create(
                 staff=staff,
                 payment_period=payment_period,

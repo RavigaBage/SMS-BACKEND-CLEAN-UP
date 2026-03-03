@@ -27,7 +27,6 @@ class TeacherService:
             ValidationError: If validation fails
         """
         try:
-            # Get the user
             user_id = teacher_data.get('user_id')
             if not user_id:
                 raise ValidationError("user_id is required")
@@ -37,18 +36,14 @@ class TeacherService:
             except User.DoesNotExist:
                 raise ValidationError(f"User with id {user_id} does not exist")
             
-            # Validate user role
             if user.role != 'teacher':
                 raise ValidationError("User must have 'teacher' role")
             
-            # Check if teacher profile already exists
             if hasattr(user, 'teacher_profile'):
                 raise ValidationError("Teacher profile already exists for this user")
             
-            # Get subject IDs if provided
             subject_ids = teacher_data.pop('subject_ids', [])
             
-            # Create teacher profile
             teacher = Teacher.objects.create(
                 user=user,
                 first_name=teacher_data.get('first_name', user.first_name or ''),
@@ -60,8 +55,6 @@ class TeacherService:
                 emergency_contact=teacher_data.get('emergency_contact', ''),
                 assigned_by=assigned_by
             )
-            
-            # Assign subjects if provided
             if subject_ids:
                 subjects = Subject.objects.filter(id__in=subject_ids)
                 teacher.subjects.set(subjects)
@@ -98,17 +91,15 @@ class TeacherService:
             raise ValidationError("Teacher not found")
         
         try:
-            # Get subject IDs if provided
+            
             subject_ids = teacher_data.pop('subject_ids', None)
             
-            # Update teacher fields
             for field, value in teacher_data.items():
                 if hasattr(teacher, field):
                     setattr(teacher, field, value)
             
             teacher.save()
             
-            # Update subjects if provided
             if subject_ids is not None:
                 subjects = Subject.objects.filter(id__in=subject_ids)
                 teacher.subjects.set(subjects)
@@ -148,12 +139,10 @@ class TeacherService:
             if not subject_ids:
                 raise ValidationError("At least one subject ID is required")
             
-            # Validate that all subjects exist
             subjects = Subject.objects.filter(id__in=subject_ids)
             if subjects.count() != len(subject_ids):
                 raise ValidationError("One or more subject IDs are invalid")
             
-            # Assign subjects
             teacher.subjects.set(subjects)
             
             logger.info(f"Subjects assigned to teacher {teacher_id}: {subject_ids}")
@@ -191,7 +180,6 @@ class TeacherService:
             if not subject_ids:
                 raise ValidationError("At least one subject ID is required")
             
-            # Remove subjects
             subjects = Subject.objects.filter(id__in=subject_ids)
             teacher.subjects.remove(*subjects)
             
@@ -227,14 +215,12 @@ class TeacherService:
             raise ValidationError("Teacher not found")
         
         try:
-            # Cannot deactivate yourself
             if teacher.user == deactivated_by:
                 raise ValidationError("You cannot deactivate your own teacher profile")
             
             teacher.is_active = False
             teacher.save()
             
-            # Also deactivate the user account
             teacher.user.is_active = False
             teacher.user.save()
             

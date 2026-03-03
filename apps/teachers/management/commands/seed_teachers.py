@@ -1,59 +1,111 @@
 import random
+
 from django.core.management.base import BaseCommand
 from django.db import transaction
+
+from apps.academic.models import Subject
 from apps.accounts.models import User
 from apps.teachers.models import Teacher
-from apps.academic.models import Subject  # Adjust path if needed
+
+
+FIRST_NAMES = [
+    "John",
+    "Jane",
+    "Alice",
+    "Bob",
+    "Claire",
+    "Daniel",
+    "Grace",
+    "Samuel",
+    "Naomi",
+    "Prince",
+]
+
+LAST_NAMES = [
+    "Mensah",
+    "Boateng",
+    "Asante",
+    "Owusu",
+    "Adjei",
+    "Appiah",
+    "Darko",
+    "Ofori",
+]
+
+SPECIALIZATIONS = [
+    "Mathematics",
+    "Science",
+    "English",
+    "History",
+    "ICT",
+    "Arts",
+]
+
 
 class Command(BaseCommand):
-    help = 'Seeds teachers and links them to existing subjects'
+    help = "Seed teacher users/profiles with subject links for pagination testing."
 
-    def handle(self, *args, **kwargs):
-        self.stdout.write("Seeding Teachers...")
+    def add_arguments(self, parser):
+        parser.add_argument("--count", type=int, default=80, help="Total teachers to ensure.")
+        parser.add_argument("--prefix", type=str, default="seed", help="Username/email prefix.")
+        parser.add_argument("--password", type=str, default="Pass1234!")
 
-        # Get some subjects to assign randomly
+    def handle(self, *args, **options):
+        target_count = max(0, int(options["count"]))
+        prefix = options["prefix"].strip().lower()
+        password = options["password"]
+
         available_subjects = list(Subject.objects.all())
-        if not available_subjects:
-            self.stdout.write(self.style.WARNING("No subjects found. Run your subject seed first if you want to link them!"))
-
-        teacher_data = [
-            ('math_guru', 'John', 'Doe', 'Advanced Mathematics'),
-            ('bio_expert', 'Jane', 'Smith', 'Biological Sciences'),
-            ('history_buff', 'Alice', 'Johnson', 'Modern History'),
-            ('tech_lead', 'Bob', 'Wilson', 'Computer Science'),
-            ('lit_lover', 'Claire', 'Davis', 'English Literature'),
-        ]
+        self.stdout.write(self.style.NOTICE("Seeding teachers..."))
 
         with transaction.atomic():
-            for username, f_name, l_name, spec in teacher_data:
-                # 1. Create the User
-                user, created = User.objects.get_or_create(
+            existing = Teacher.objects.filter(user__username__startswith=f"{prefix}_teacher_").count()
+            to_create = max(0, target_count - existing)
+            created = 0
+            cursor = existing + 1
+
+            for _ in range(to_create):
+                first_name = random.choice(FIRST_NAMES)
+                last_name = random.choice(LAST_NAMES)
+                username = f"{prefix}_teacher_{cursor:04d}"
+                email = f"{username}@school.com"
+                cursor += 1
+
+                if User.objects.filter(username=username).exists():
+                    continue
+
+                user = User.objects.create_user(
                     username=username,
-                    defaults={
-                        'email': f"{username}@school.com",
-                        'first_name': f_name,
-                        'last_name': l_name,
-                        'is_staff': True
-                    }
+                    email=email,
+                    password=password,
+                    role=User.Role.TEACHER,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_staff=True,
+                    is_active=True,
                 )
-                if created:
-                    user.set_password('password123')
-                    user.save()
 
-                # 2. Create the Teacher Profile
-                teacher, t_created = Teacher.objects.get_or_create(
+                teacher = Teacher.objects.create(
                     user=user,
-                    defaults={
-                        'first_name': f_name,
-                        'last_name': l_name,
-                        'specialization': spec,
-                    }
+                    first_name=first_name,
+                    last_name=last_name,
+                    specialization=random.choice(SPECIALIZATIONS),
+                    years_of_experience=random.randint(1, 20),
+                    qualifications="B.Ed",
+                    phone_number=f"+23320{random.randint(1000000, 9999999)}",
+                    emergency_contact=f"+23324{random.randint(1000000, 9999999)}",
+                    assigned_by=User.objects.filter(role=User.Role.ADMIN).first(),
                 )
 
-                # 3. Assign 1-2 random subjects if they exist
-                if t_created and available_subjects:
-                    random_subs = random.sample(available_subjects, min(len(available_subjects), 2))
-                    teacher.subjects.add(*random_subs)
-                    self.stdout.write(f"Added {teacher} with subjects: {[s.subject_name for s in random_subs]}")
+                if available_subjects:
+                    chosen = random.sample(available_subjects, min(len(available_subjects), random.randint(1, 3)))
+                    teacher.subjects.add(*chosen)
 
-        self.stdout.write(self.style.SUCCESS(f"Successfully seeded {len(teacher_data)} teachers."))
+                created += 1
+
+        total = Teacher.objects.filter(user__username__startswith=f"{prefix}_teacher_").count()
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Teachers seed complete. Created {created}, total {total} for prefix '{prefix}'."
+            )
+        )

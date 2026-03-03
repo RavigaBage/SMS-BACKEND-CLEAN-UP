@@ -49,7 +49,6 @@ class InvoiceSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
-    # academic_year is a plain string — just accept it as-is
     academic_year = serializers.CharField()
     items                  = InvoiceItemSerializer(many=True, read_only=True)
     status_display         = serializers.CharField(source='get_status_display', read_only=True)
@@ -64,10 +63,10 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = [
                 'id',
                 'invoice_number',
-                'student',           # the nested representation
+                'student',           
                 'items',
                 'amount_paid',
-                'balance',           # auto-calculated in model.save()
+                'balance',        
                 'status',
                 'status_display',
                 'term_display',

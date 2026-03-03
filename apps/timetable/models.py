@@ -59,12 +59,10 @@ class Timetable(models.Model):
             models.Index(fields=["term", "academic_year"]),
         ]
         constraints = [
-            # defensive constraint for obvious programming mistakes:
             models.CheckConstraint(
                 condition=Q(start_time__lt=F("end_time")),
                 name="timetable_start_before_end",
             ),
-            # prevent exact duplicate rows for same class/teacher/time/term/year
             models.UniqueConstraint(
                 fields=["class_obj", "subject", "day_of_week", "start_time", "end_time", "term", "academic_year"],
                 name="unique_class_subject_exact_timeslot",
@@ -83,11 +81,10 @@ class Timetable(models.Model):
         - no overlapping session for same teacher in same term/year
         - no overlapping session for same class in same term/year
         """
-        # start / end sanity
+       
         if self.start_time >= self.end_time:
             raise ValidationError({"start_time": "Start time must be before end time."})
 
-        # Build common overlapping filter (same day, overlapping time)
         overlap_q = Q(
             day_of_week=self.day_of_week,
             start_time__lt=self.end_time,
@@ -96,19 +93,16 @@ class Timetable(models.Model):
             academic_year=self.academic_year,
         )
 
-        # Exclude self when updating
         base_qs = Timetable.objects.filter(overlap_q)
         if self.pk:
             base_qs = base_qs.exclude(pk=self.pk)
 
-        # Class conflict
         class_conflicts = base_qs.filter(class_obj=self.class_obj)
         if class_conflicts.exists():
             raise ValidationError(
                 {"class_obj": "This class already has a session at this time in the selected term/year."}
             )
 
-        # Teacher conflict (only check if teacher is provided)
         if self.teacher:
             teacher_conflicts = base_qs.filter(teacher=self.teacher)
             if teacher_conflicts.exists():

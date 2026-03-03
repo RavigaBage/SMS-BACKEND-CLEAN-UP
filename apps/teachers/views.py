@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
 from django.core.exceptions import ValidationError
@@ -38,22 +39,18 @@ class TeacherViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by active status
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
         
-        # Filter by specialization
         specialization = self.request.query_params.get('specialization')
         if specialization:
             queryset = queryset.filter(specialization__icontains=specialization)
         
-        # Filter by subject
         subject_id = self.request.query_params.get('subject_id')
         if subject_id:
             queryset = queryset.filter(subjects__id=subject_id)
         
-        # Search by name
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -80,7 +77,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
             response_serializer = TeacherSerializer(teacher)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating teacher: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -138,7 +135,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
             response_serializer = TeacherSerializer(teacher)
             return Response(response_serializer.data)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating teacher {instance.id}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -201,7 +198,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 }
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error assigning subjects to teacher {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -253,7 +250,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 }
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error removing subjects from teacher {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -301,7 +298,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 }
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error deactivating teacher {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -350,7 +347,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 'total_workload': workload_data['total_workload']
             })
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error retrieving teacher workload {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):

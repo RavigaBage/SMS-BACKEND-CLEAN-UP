@@ -127,7 +127,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.DictField())
     def get_current_class(self, obj):
-        # Get the active enrollment
+   
         enrollment = obj.enrollments.filter(status="active").select_related("class_obj").first()
         if enrollment:
             return {
@@ -185,7 +185,6 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
 
 
 class StudentParentSerializer(serializers.ModelSerializer):
-    # We change these to PrimaryKeyRelatedFields so they accept IDs on POST/PUT
     student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all())
     parent = serializers.PrimaryKeyRelatedField(queryset=Parent.objects.all())
 
@@ -260,7 +259,7 @@ class ParentAccessSerializer(serializers.ModelSerializer):
         invites = getattr(obj, "invites", None)
         if invites is None:
             return obj.invites.order_by("-created_at").first()
-        # Works with prefetched related manager cache
+      
         invite_list = list(invites.all())
         return invite_list[0] if invite_list else None
 

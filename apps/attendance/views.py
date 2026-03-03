@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Q
 from django.core.exceptions import ValidationError
@@ -24,28 +25,25 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by student
         student_id = self.request.query_params.get('student_id', None)
         if student_id:
             queryset = queryset.filter(student_id=student_id)
         
-        # Filter by class
         class_id = self.request.query_params.get('class_id', None)
         if class_id:
             queryset = queryset.filter(class_obj_id=class_id)
         
-        # Filter by date
         date = self.request.query_params.get('date', None)
         if date:
             queryset = queryset.filter(attendance_date=date)
         
-        # Filter by date range
+  
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         if start_date and end_date:
             queryset = queryset.filter(attendance_date__range=[start_date, end_date])
         
-        # Filter by status
+    
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -57,7 +55,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating attendance: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -102,7 +100,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         try:
             return super().update(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating attendance: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -173,7 +171,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     status_value = record['status']
                     remarks = record.get('remarks', '')
                     
-                    # Check if attendance already exists
                     attendance, created = Attendance.objects.update_or_create(
                         student_id=student_id,
                         attendance_date=attendance_date,
@@ -203,7 +200,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'errors': errors
             }, status=status.HTTP_201_CREATED)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error in bulk mark: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -249,25 +246,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Get all active students in the class
             from apps.academic.models import Enrollment
             enrollments = Enrollment.objects.filter(
                 class_obj_id=class_id,
                 status='active'
             ).select_related('student')
             
-            # Get attendance records for the date
             attendance_records = Attendance.objects.filter(
                 class_obj_id=class_id,
                 attendance_date=date
             )
             
-            # Create a map of student_id to attendance
             attendance_map = {
                 record.student_id: record for record in attendance_records
             }
             
-            # Build response
             students_data = []
             for enrollment in enrollments:
                 student = enrollment.student
@@ -290,7 +283,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'students': students_data
             })
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error getting class attendance: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -337,19 +330,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Default to current month if dates not provided
             if not start_date or not end_date:
                 today = datetime.now().date()
                 start_date = today.replace(day=1)
                 end_date = today
             
-            # Get attendance records
             attendance_records = Attendance.objects.filter(
                 student_id=student_id,
                 attendance_date__range=[start_date, end_date]
             )
             
-            # Calculate statistics
             total_days = attendance_records.count()
             present_days = attendance_records.filter(status='present').count()
             absent_days = attendance_records.filter(status='absent').count()
@@ -385,7 +375,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error getting student report: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -432,23 +422,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Default to current month if dates not provided
             if not start_date or not end_date:
                 today = datetime.now().date()
                 start_date = today.replace(day=1)
                 end_date = today
             
-            # Get all attendance records for the class in date range
             attendance_records = Attendance.objects.filter(
                 class_obj_id=class_id,
                 attendance_date__range=[start_date, end_date]
             )
             
-            # Calculate statistics
             total_records = attendance_records.count()
             status_breakdown = attendance_records.values('status').annotate(count=Count('id'))
             
-            # Get unique dates
             unique_dates = attendance_records.values('attendance_date').distinct().count()
             
             return Response({
@@ -460,7 +446,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'status_breakdown': list(status_breakdown)
             })
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error getting class summary: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -494,17 +480,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         """Get list of students with low attendance"""
         try:
             class_id = request.query_params.get('class_id')
-            threshold = float(request.query_params.get('threshold', 75))  # Default 75%
+            threshold = float(request.query_params.get('threshold', 75))  
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             
-            # Default to current month if dates not provided
             if not start_date or not end_date:
                 today = datetime.now().date()
                 start_date = today.replace(day=1)
                 end_date = today
             
-            # Get all students
             from apps.academic.models import Enrollment
             query = Enrollment.objects.filter(status='active').select_related('student')
             
@@ -516,7 +500,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             for enrollment in query:
                 student = enrollment.student
                 
-                # Get attendance records
                 attendance_records = Attendance.objects.filter(
                     student=student,
                     attendance_date__range=[start_date, end_date]
@@ -559,7 +542,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error getting defaulters: {str(e)}")
             
             if hasattr(e, 'message_dict'):

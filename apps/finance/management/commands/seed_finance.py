@@ -1,115 +1,166 @@
 import random
 from datetime import date, timedelta
 from decimal import Decimal
+
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from apps.finance.models import FeeStructure, Invoice, InvoiceItem, Payment, Expenditure
-from apps.academic.models import AcademicYear, Class
-from apps.students.models import Student
+
 from apps.accounts.models import User
+from apps.finance.models import Expenditure, FeeStructure, Invoice, InvoiceItem, Payment
+from apps.students.models import Student
+
 
 class Command(BaseCommand):
-    help = 'Populates financial data: Fee structures, Invoices, Payments, and Expenditures'
+    help = "Populate finance data (fees, invoices, payments, expenditures) for pagination testing."
 
-    def handle(self, *args, **kwargs):
-        self.stdout.write("Seeding Financial Data...")
+    def add_arguments(self, parser):
+        parser.add_argument("--invoices", type=int, default=200, help="Number of invoices to ensure.")
+        parser.add_argument("--expenditures", type=int, default=120, help="Number of expenditures to ensure.")
+        parser.add_argument("--year", type=str, default="2025-2026", help="Academic year string.")
+        parser.add_argument("--prefix", type=str, default="SEED", help="Invoice/payment/expenditure id prefix.")
 
-        # Get prerequisites
-        admin_user = User.objects.filter(role='admin').first()
-        academic_year = AcademicYear.objects.filter(is_current=True).first()
-        
-        if not admin_user or not academic_year:
-            self.stdout.write(self.style.ERROR("Prerequisites missing. Ensure an Admin user and Current Academic Year exist."))
+    def handle(self, *args, **options):
+        target_invoices = max(0, int(options["invoices"]))
+        target_expenditures = max(0, int(options["expenditures"]))
+        year_name = options["year"].strip()
+        prefix = options["prefix"].strip().upper()
+
+        admin_user = User.objects.filter(role=User.Role.ADMIN).first()
+        if not admin_user:
+            self.stdout.write(self.style.ERROR("No admin user found. Run seed_account first."))
             return
 
-        with transaction.atomic():
-            # 1. Create Fee Structures (General and Class-specific)
-            fees_data = [
-                ("Tuition Fee", Decimal('1500.00'), 'term', 'all', True),
-                ("Development Levy", Decimal('200.00'), 'annual', '1', True),
-                ("ICT Fee", Decimal('100.00'), 'term', 'all', True),
-                ("Lunch Program", Decimal('500.00'), 'term', 'all', False),
-            ]
+        students = list(Student.objects.order_by("id"))
+        if not students:
+            self.stdout.write(self.style.ERROR("No students found. Run seed_students first."))
+            return
 
+        self.stdout.write(self.style.NOTICE("Seeding finance data..."))
+        with transaction.atomic():
+            fees_data = [
+                ("Tuition Fee", Decimal("1500.00"), "term", "all", True),
+                ("Development Levy", Decimal("200.00"), "annual", "1", True),
+                ("ICT Fee", Decimal("100.00"), "term", "all", True),
+                ("Library Fee", Decimal("80.00"), "term", "all", True),
+                ("Lunch Program", Decimal("500.00"), "term", "all", False),
+            ]
             structures = []
             for name, amt, freq, term, mandatory in fees_data:
                 fs, _ = FeeStructure.objects.get_or_create(
-                    academic_year=academic_year,
+                    academic_year=year_name,
                     category_name=name,
                     defaults={
-                        'amount': amt,
-                        'frequency': freq,
-                        'term': term,
-                        'is_mandatory': mandatory
-                    }
+                        "amount": amt,
+                        "frequency": freq,
+                        "term": term,
+                        "is_mandatory": mandatory,
+                    },
                 )
                 structures.append(fs)
 
-            # 2. Generate Invoices for all Students
-            students = Student.objects.all()
-            for i, student in enumerate(students):
-                inv_no = f"INV/{date.today().year}/{i+1:04d}"
-                
-                # Create the base invoice
+            existing_invoice_count = Invoice.objects.filter(
+                invoice_number__startswith=f"{prefix}-INV-"
+            ).count()
+            to_create_invoices = max(0, target_invoices - existing_invoice_count)
+
+            created_invoices = 0
+            for i in range(to_create_invoices):
+                student = students[(existing_invoice_count + i) % len(students)]
+                seq = existing_invoice_count + i + 1
+                inv_no = f"{prefix}-INV-{date.today().year}-{seq:06d}"
+
+                if Invoice.objects.filter(invoice_number=inv_no).exists():
+                    continue
+
                 invoice = Invoice.objects.create(
                     invoice_number=inv_no,
                     student=student,
-                    academic_year=academic_year,
-                    term='1',
-                    total_amount=0, # Will update after adding items
-                    amount_paid=0,
-                    balance=0,
-                    due_date=date.today() + timedelta(days=30),
-                    generated_by=admin_user
+                    academic_year=year_name,
+                    term=random.choice(["1", "2", "3"]),
+                    total_amount=Decimal("0.00"),
+                    amount_paid=Decimal("0.00"),
+                    balance=Decimal("0.00"),
+                    due_date=date.today() + timedelta(days=random.randint(14, 90)),
+                    generated_by=admin_user,
                 )
 
-                # Add items based on mandatory FeeStructures
-                running_total = Decimal('0.00')
+                running_total = Decimal("0.00")
                 for fs in structures:
-                    if fs.is_mandatory:
+                    if fs.is_mandatory or random.randint(1, 100) <= 20:
                         InvoiceItem.objects.create(
                             invoice=invoice,
                             fee_structure=fs,
                             description=fs.category_name,
-                            amount=fs.amount
+                            amount=fs.amount,
                         )
                         running_total += fs.amount
-                
-                # Update Invoice total
-                invoice.total_amount = running_total
-                invoice.save() # Triggers balance calculation in model save()
 
-                # 3. Randomly Add Payments to some invoices
-                if i % 2 == 0:  # Every second student has made a payment
-                    pay_amt = invoice.total_amount if i % 4 == 0 else Decimal('500.00')
+                invoice.total_amount = running_total
+                invoice.save()
+
+                payment_chance = random.randint(1, 100)
+                if payment_chance <= 70 and running_total > 0:
+                    if payment_chance <= 30:
+                        pay_amt = running_total
+                    else:
+                        pay_amt = (running_total * Decimal(str(random.uniform(0.25, 0.8)))).quantize(
+                            Decimal("0.01")
+                        )
+
                     Payment.objects.create(
-                        payment_number=f"PAY/{date.today().year}/{i+1:04d}",
+                        payment_number=f"{prefix}-PAY-{date.today().year}-{seq:06d}",
                         invoice=invoice,
                         amount_paid=pay_amt,
-                        payment_method=random.choice(['cash', 'bank_transfer', 'mobile_money']),
-                        transaction_reference=f"REF-{random.randint(10000, 99999)}",
-                        received_by=admin_user
+                        payment_method=random.choice(
+                            ["cash", "bank_transfer", "mobile_money", "card"]
+                        ),
+                        transaction_reference=f"REF-{random.randint(100000, 999999)}",
+                        received_by=admin_user,
                     )
 
-            # 4. Create Realistic Expenditures
-            expenses = [
-                ("Electricity Bill", 'utilities', Decimal('450.00'), "Utility Co."),
-                ("Stationery Restock", 'supplies', Decimal('1200.00'), "Office Depot"),
-                ("Plumbing Repairs", 'maintenance', Decimal('300.00'), "FixIt Plumbers"),
-                ("Fuel for School Bus", 'transport', Decimal('800.00'), "Shell Station"),
+                created_invoices += 1
+
+            categories = [choice[0] for choice in Expenditure.Category.choices]
+            methods = [choice[0] for choice in Expenditure.PaymentMethod.choices]
+            existing_exp_count = Expenditure.objects.filter(
+                expenditure_number__startswith=f"{prefix}-EXP-"
+            ).count()
+            to_create_exp = max(0, target_expenditures - existing_exp_count)
+            created_exp = 0
+
+            expense_names = [
+                "Electricity Bill",
+                "Stationery Restock",
+                "Plumbing Repairs",
+                "Bus Fuel",
+                "Internet Subscription",
+                "Printer Toner",
+                "Sports Kits",
+                "Cleaning Supplies",
             ]
 
-            for i, (name, cat, amt, vendor) in enumerate(expenses):
-                Expenditure.objects.create(
-                    expenditure_number=f"EXP/{date.today().year}/{i+1:04d}",
-                    item_name=name,
-                    category=cat,
-                    amount=amt,
-                    vendor_name=vendor,
-                    transaction_date=date.today() - timedelta(days=random.randint(1, 30)),
-                    payment_method='cash',
-                    approved_by=admin_user,
-                    processed_by=admin_user
-                )
+            for i in range(to_create_exp):
+                seq = existing_exp_count + i + 1
+                exp_no = f"{prefix}-EXP-{date.today().year}-{seq:06d}"
+                if Expenditure.objects.filter(expenditure_number=exp_no).exists():
+                    continue
 
-        self.stdout.write(self.style.SUCCESS(f"Seeded fees, {students.count()} invoices, payments, and expenses!"))
+                Expenditure.objects.create(
+                    expenditure_number=exp_no,
+                    item_name=random.choice(expense_names),
+                    category=random.choice(categories),
+                    amount=Decimal(random.randint(50, 5000)),
+                    vendor_name=f"Vendor {random.randint(1, 200)}",
+                    transaction_date=date.today() - timedelta(days=random.randint(0, 180)),
+                    payment_method=random.choice(methods),
+                    description="Auto-seeded for pagination testing.",
+                    approved_by=admin_user,
+                    processed_by=admin_user,
+                )
+                created_exp += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Finance seed complete. Created {created_invoices} invoices and {created_exp} expenditures."
+            )
+        )

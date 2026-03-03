@@ -38,9 +38,7 @@ class TimetableViewSet(viewsets.ModelViewSet):
     serializer_class = TimetableSerializer
     permission_classes = [IsAuthenticated]
 
-    # -------------------------
-    # Permissions
-    # -------------------------
+   
     def get_permissions(self):
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [IsAuthenticated(), IsAdminOrHeadmaster()]
@@ -96,13 +94,10 @@ class TimetableViewSet(viewsets.ModelViewSet):
         return any(token in msg for token in duplicate_tokens)
 
     def _error_response(self, message, status_code):
-        # Always return a string message per API contract requested by frontend.
         msg = str(message)
         return Response(msg, status=status_code)
 
-    # -------------------------
-    # Queryset Override
-    # -------------------------
+ 
     def get_queryset(self):
         queryset = super().get_queryset()
         
@@ -117,9 +112,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
             
         return self._apply_filters(queryset)
 
-    # -------------------------
-    # Conflict Detection Logic
-    # -------------------------
     def _check_conflicts(
         self,
         class_id,
@@ -162,9 +154,7 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 {"This teacher is already booked at this time."}
             )
 
-    # -------------------------
-    # Create Override
-    # -------------------------
+   
     def create(self, request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
@@ -208,9 +198,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # -------------------------
-    # Update Override
-    # -------------------------
     def update(self, request, *args, **kwargs):
         try:
             partial = kwargs.pop("partial", False)
@@ -262,9 +249,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # -------------------------
-    # Custom Actions
-    # -------------------------
     @action(detail=False, methods=["get"])
     def class_schedule(self, request):
         class_id = self._get_int_param("class_id")
@@ -343,29 +327,22 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             return SyllabusListSerializer
         return SyllabusSerializer
 
-    # ── Permission split: anyone authenticated can read, writes are guarded ──
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action == 'create':
+            return [IsAuthenticated()]  
+        if self.action in ['update', 'partial_update', 'destroy']:
             return [IsAuthenticated(), IsAdminOrHeadmaster()]
         return [IsAuthenticated()]
 
-    # ── Ownership check reused by create & update ─────────────────────────────
     def _assert_ownership(self, request, teacher_id, class_obj_id):
-        """
-        Raises PermissionDenied if the requesting teacher is not assigned
-        to the teacher or class referenced in the payload.
-        Admins/Headmasters bypass this entirely.
-        """
         user = request.user
 
-        # Admins and headmasters are always allowed
         if user.role in [User.Role.ADMIN, User.Role.HEADMASTER]:
             return
 
-        # For teachers: they must own the teacher slot AND the class
         if user.role == User.Role.TEACHER:
             try:
-                teacher_profile = user.teacher_profile  # adjust to your related_name
+                teacher_profile = user.teacher_profile 
             except Exception:
                 raise PermissionDenied("No teacher profile found for this account.")
 
@@ -374,59 +351,41 @@ class SyllabusViewSet(viewsets.ModelViewSet):
                     "You can only upload a syllabus assigned to yourself as the teacher."
                 )
 
-            if class_obj_id:
-                # Check the teacher is actually assigned to this class in the timetable
-                is_assigned = Timetable.objects.filter(
-                    teacher=teacher_profile,
-                    class_obj_id=int(class_obj_id)
-                ).exists()
-
-                if not is_assigned:
-                    raise PermissionDenied(
-                        "You are not assigned to this class and cannot upload a syllabus for it."
-                    )
-
     def create(self, request, *args, **kwargs):
         try:
-            # Pull the IDs before full validation so we can check ownership early
-            teacher_id   = request.data.get('teacher')
-            class_obj_id = request.data.get('class_obj')
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            data = serializer.validated_data
+            teacher_id = data.get('teacher').id if data.get('teacher') else None
+            class_obj_id = data.get('class_obj').id if data.get('class_obj') else None
+            
             self._assert_ownership(request, teacher_id, class_obj_id)
             
-            if request.user.role not in [User.Role.TEACHER]:
-                return Response(
-                    {"error": "Only teachers can create a syllabus. Please log in as a teacher."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            return super().create(request, *args, **kwargs)
+            self.perform_create(serializer)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        except DRFValidationError as e:
+            logger.warning(f"Validation error creating syllabus: {str(e)}")
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
 
         except PermissionDenied as e:
+            logger.warning(f"Permission denied: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
-
-        except ValidationError as e:
-            logger.error(f"Validation error creating syllabus: {str(e)}")
-            error_detail = (
-                e.message_dict if hasattr(e, 'message_dict')
-                else e.messages[0] if hasattr(e, 'messages') and e.messages
-                else str(e)
-            )
-            return Response({'Validation Error': str(error_detail)}, status=status.HTTP_400_BAD_REQUEST)
 
         except IntegrityError as e:
             logger.error(f"Integrity error creating syllabus: {str(e)}")
             return Response(
-                {'Database Error': 'Syllabus already exists for this subject and week or database constraint violated.'},
+                {'error': 'Syllabus already exists for this subject, teacher, and week.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         except Exception as e:
             logger.error(f"Unexpected error creating syllabus: {str(e)}", exc_info=True)
             return Response(
-                {'Server Error': 'An unexpected error occurred while creating the syllabus.'},
+                {'error': 'An unexpected server error occurred.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
     def update(self, request, *args, **kwargs):
         try:
             teacher_id   = request.data.get('teacher')
@@ -515,7 +474,6 @@ class SyllabusViewSet(viewsets.ModelViewSet):
         try:
             queryset = self.queryset
             
-            # Apply filters from query params
             subject_id = request.query_params.get('subject_id')
             teacher_id = request.query_params.get('teacher_id')
             class_id = request.query_params.get('class_id')
@@ -527,7 +485,6 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             if class_id:
                 queryset = queryset.filter(class_obj_id=class_id)
             
-            # Group by week
             weeks = {}
             for syllabus in queryset:
                 week = syllabus.week_number
@@ -549,7 +506,6 @@ class SyllabusViewSet(viewsets.ModelViewSet):
             )
 
 
-# Function-based view with exception handling
 @api_view(['GET'])
 def get_syllabus_by_params(request):
     """

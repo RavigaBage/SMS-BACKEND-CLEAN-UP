@@ -3,8 +3,6 @@ from django.template.loader import render_to_string
 from django.conf import settings
 
 
-# ─── apps/students/email.py ───────────────────────────────────────────────────
-
 def send_parent_invite_email(invite):
     """
     Send an invite code email to a parent.
@@ -21,7 +19,6 @@ def send_parent_invite_email(invite):
     if not parent.email:
         return False, "No email address on file for this parent."
 
-    # Build the ward list to include in the email
     wards = parent.wards.values('first_name', 'last_name', 'admission_number')
 
     context = {
@@ -39,10 +36,8 @@ def send_parent_invite_email(invite):
         ],
     }
 
-    # Render the HTML template
     html_content = render_to_string('emails/parent_invite.html', context)
 
-    # Plain text fallback (for email clients that don't render HTML)
     text_content = (
         f"Dear {parent.full_name},\n\n"
         f"You have been invited to access the {context['school_name']} Parent Portal.\n\n"

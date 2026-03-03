@@ -2,12 +2,20 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from .models import Grade, Student, Class
-from .serializers import GradeSerializer, ClassStudentListSerializer, StudentTranscriptSerializer
+from .serializers import (
+    GradeSerializer,
+    ClassStudentListSerializer,
+    StudentTranscriptSerializer,
+    StudentMinimalSerializer,
+)
+from apps.academic.serializers import SubjectSerializer
+from apps.academic.models import Subject
 from apps.accounts.permissions import CanManageGrades
 from .Utils import AcademicReportGenerator
 import logging
@@ -19,6 +27,52 @@ class GradeViewSet(viewsets.ModelViewSet):
     queryset = Grade.objects.select_related('student', 'subject', 'class_obj').all()
     serializer_class = GradeSerializer
     permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _normalize_validation_detail(detail):
+        if isinstance(detail, dict):
+            normalized = {}
+            for key, value in detail.items():
+                if isinstance(value, list):
+                    normalized[key] = [str(v) for v in value]
+                else:
+                    normalized[key] = str(value)
+            return normalized
+        if isinstance(detail, list):
+            return [str(v) for v in detail]
+        return str(detail)
+
+    @staticmethod
+    def _academic_year_variants(academic_year):
+        """
+        Accept common year formats so grade listing does not drop valid records
+        due to formatting differences (e.g. 2025-26, 2025/26, 2025-2026).
+        """
+        if not academic_year:
+            return []
+
+        raw = str(academic_year).strip()
+        if not raw:
+            return []
+
+        variants = {raw, raw.replace("/", "-"), raw.replace("-", "/")}
+
+        normalized = raw.replace("/", "-")
+        parts = normalized.split("-")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            start = parts[0]
+            end = parts[1]
+
+            if len(end) == 2:
+                full_end = f"{start[:2]}{end}"
+                variants.add(f"{start}-{full_end}")
+                variants.add(f"{start}/{full_end}")
+            elif len(end) == 4:
+                short_end = end[-2:]
+                variants.add(f"{start}-{short_end}")
+                variants.add(f"{start}/{short_end}")
+
+        return list(variants)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -33,15 +87,114 @@ class GradeViewSet(viewsets.ModelViewSet):
             if subject_id:
                 queryset = queryset.filter(subject_id=subject_id)
             if academic_year:
-                queryset = queryset.filter(academic_year=academic_year)
+                queryset = queryset.filter(
+                    academic_year__in=self._academic_year_variants(academic_year)
+                )
             if term:
                 queryset = queryset.filter(term=term)
         return queryset
+
+    def _build_placeholder_grade_row(self, student, subject, academic_year, term):
+        return {
+            "id": None,
+            "student": StudentMinimalSerializer(student).data,
+            "subject": SubjectSerializer(subject).data if subject else None,
+            "academic_year": academic_year,
+            "term": term,
+            "total_score": 0,
+            "grade_letter": None,
+            "percentage": 0,
+            "subject_rank": None,
+            "class_average": 0,
+            "assessment_score": 0,
+            "assessment_total": 0,
+            "test_score": 0,
+            "test_total": 0,
+            "exam_score": 0,
+            "exam_total": 0,
+            "weighted_assessment": 0,
+            "weighted_test": 0,
+            "weighted_exam": 0,
+            "remarks": "",
+        }
+
+    def list(self, request, *args, **kwargs):
+        """
+        For class-grade-sheet filters, return one row per enrolled student.
+        Missing grade records are returned as zero-filled placeholders.
+        """
+        class_id = request.query_params.get("class")
+        subject_id = request.query_params.get("subject")
+        academic_year = request.query_params.get("academic_year")
+        term = request.query_params.get("term")
+
+        if all([class_id, subject_id, academic_year, term]):
+            year_variants = self._academic_year_variants(academic_year)
+
+            class_obj = Class.objects.filter(pk=class_id).first()
+            if not class_obj:
+                return Response({"count": 0, "next": None, "previous": None, "results": []})
+
+            enrolled_qs = (
+                class_obj.enrollments.select_related("student", "class_obj")
+                .filter(status="active")
+                .filter(
+                    Q(academic_year__in=year_variants) |
+                    Q(class_obj__academic_year__in=year_variants)
+                )
+                .order_by("roll_number", "student__first_name", "student__last_name")
+            )
+
+            grades_qs = Grade.objects.filter(
+                class_obj_id=class_id,
+                subject_id=subject_id,
+                academic_year__in=year_variants,
+                term=term,
+            ).select_related("student", "subject")
+            grades_by_student_id = {g.student_id: g for g in grades_qs}
+
+            subject_obj = Subject.objects.filter(pk=subject_id).first()
+            serializer_context = self.get_serializer_context()
+
+            page = self.paginate_queryset(enrolled_qs)
+            enrollments_page = page if page is not None else enrolled_qs
+
+            rows = []
+            for enrollment in enrollments_page:
+                grade = grades_by_student_id.get(enrollment.student_id)
+                if grade:
+                    rows.append(GradeSerializer(grade, context=serializer_context).data)
+                else:
+                    rows.append(
+                        self._build_placeholder_grade_row(
+                            student=enrollment.student,
+                            subject=subject_obj,
+                            academic_year=academic_year,
+                            term=term,
+                        )
+                    )
+
+            if page is not None:
+                return self.get_paginated_response(rows)
+            return Response(rows)
+
+        return super().list(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         """Create grade with exception handling"""
         try:
             return super().create(request, *args, **kwargs)
+
+        except DRFValidationError as e:
+            logger.warning(f"Validation error creating grade: {e.detail}")
+            error_detail = self._normalize_validation_detail(e.detail)
+            return Response(
+                {
+                    'error': 'Validation Error',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         except ValidationError as e:
             logger.error(f"Validation error creating grade: {str(e)}")
@@ -87,6 +240,17 @@ class GradeViewSet(viewsets.ModelViewSet):
         """Update grade with exception handling"""
         try:
             return super().update(request, *args, **kwargs)
+
+        except DRFValidationError as e:
+            logger.warning(f"Validation error updating grade: {e.detail}")
+            error_detail = self._normalize_validation_detail(e.detail)
+            return Response(
+                {
+                    'error': 'Validation Error',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         except ValidationError as e:
             logger.error(f"Validation error updating grade: {str(e)}")
@@ -153,7 +317,6 @@ class GradeViewSet(viewsets.ModelViewSet):
                 term=term,
             ).first()
 
-            # ── GET ──────────────────────────────────────────────────────────────
             if request.method == 'GET':
                 if grade is None:
                     return Response(
@@ -164,7 +327,6 @@ class GradeViewSet(viewsets.ModelViewSet):
                 serializer = self.get_serializer(grade, context={'subject_ranks': ranks})
                 return Response({'grade': serializer.data})
 
-            # ── PATCH ─────────────────────────────────────────────────────────────
             elif request.method == 'PATCH':
                 if grade is None:
                     return Response(
@@ -172,7 +334,6 @@ class GradeViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_404_NOT_FOUND
                     )
 
-                # ── sanitize nulls / empty strings → 0 for numeric fields ────────
                 NUMERIC_FIELDS = [
                     'total_score',       'weighted_assessment',
                     'weighted_test',     'weighted_exam',
@@ -198,6 +359,14 @@ class GradeViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': f'Not Found: {error_detail}', 'detail': error_detail},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        except DRFValidationError as e:
+            logger.error(f"Validation error in get_by_params: {e.detail}")
+            error_detail = self._normalize_validation_detail(e.detail)
+            return Response(
+                {'error': 'Validation Error', 'detail': error_detail},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         except ValidationError as e:
@@ -315,10 +484,11 @@ class TranscriptViewSet(viewsets.ViewSet):
             student = get_object_or_404(Student, pk=pk)
             academic_year = request.query_params.get('academic_year')
             term = request.query_params.get('term')
+            class_id = request.query_params.get('class_id')
             
             serializer = StudentTranscriptSerializer(
                 student, 
-                context={'academic_year': academic_year, 'term': term}
+                context={'academic_year': academic_year, 'term': term,'class_id': class_id,}
             )
             return Response(serializer.data)
             
@@ -350,7 +520,6 @@ class TranscriptViewSet(viewsets.ViewSet):
         try:
             student = get_object_or_404(Student, pk=pk)
             
-            # TODO: Implement actual PDF generation
             return Response({
                 'message': 'PDF generation endpoint',
                 'student_id': student.student_id,

@@ -22,8 +22,6 @@ from apps.students.models import ParentInvite, Parent,StudentParent
 User = get_user_model()
 
 
-# ─── Serializers ──────────────────────────────────────────────────────────────
-
 class AyaanaTokenSerializer(TokenObtainPairSerializer):
     """Extend JWT payload with role so Flutter can route on login"""
 
@@ -36,8 +34,8 @@ class AyaanaTokenSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
-        # Allow login by email instead of username
-        email = attrs.get('username', '')  # simplejwt uses 'username' field name
+        
+        email = attrs.get('username', '') 
         if '@' in email:
             try:
                 user = User.objects.get(email=email)
@@ -56,8 +54,6 @@ class AyaanaLoginView(TokenObtainPairView):
     """
     serializer_class = AyaanaTokenSerializer
 
-
-# ─── /auth/me/ ────────────────────────────────────────────────────────────────
 
 class MeView(APIView):
     """
@@ -78,7 +74,6 @@ class MeView(APIView):
             'last_name':  user.last_name,
         }
 
-        # Attach parent-specific data if role is parent
         if user.role == 'parent':
             try:
                 parent = user.parent_profile
@@ -101,8 +96,6 @@ class MeView(APIView):
 
         return Response(data)
 
-
-# ─── Invite: check code ───────────────────────────────────────────────────────
 
 class CheckInviteView(APIView):
     """
@@ -141,8 +134,6 @@ class CheckInviteView(APIView):
         })
 
 
-# ─── Invite: redeem ───────────────────────────────────────────────────────────
-
 class RedeemInviteView(APIView):
     """
     POST /auth/invite/redeem/
@@ -160,7 +151,6 @@ class RedeemInviteView(APIView):
         code     = request.data.get('code', '').strip().upper()
         password = request.data.get('password', '').strip()
 
-        # ── Validate inputs ──────────────────────────────────────────────────
         if not code:
             return Response({'error': 'Invite code is required.'}, status=status.HTTP_400_BAD_REQUEST)
         if not password or len(password) < 8:
@@ -169,7 +159,6 @@ class RedeemInviteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ── Validate invite ──────────────────────────────────────────────────
         try:
             invite = ParentInvite.objects.select_related('parent').get(code=code)
         except ParentInvite.DoesNotExist:
@@ -184,30 +173,25 @@ class RedeemInviteView(APIView):
 
         parent = invite.parent
 
-        # ── Guard: parent already has an account ─────────────────────────────
         if parent.has_app_access:
             return Response(
                 {'error': 'This parent already has an app account. Please log in instead.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ── Parent must have an email to use as username ──────────────────────
         if not parent.email:
             return Response(
                 {'error': 'No email address on file for this parent. Contact the school admin.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ── Guard: email already taken ────────────────────────────────────────
         if User.objects.filter(email=parent.email).exists():
             return Response(
                 {'error': 'An account with this email already exists.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ── Create User + link to Parent ──────────────────────────────────────
         username = parent.email.split('@')[0]
-        # Ensure username is unique
         base, counter = username, 1
         while User.objects.filter(username=username).exists():
             username = f"{base}{counter}"
@@ -222,12 +206,9 @@ class RedeemInviteView(APIView):
             role='parent',
         )
 
-        # Mark invite used + link parent → user
         invite.redeem(user)
 
-        # ── Return JWT tokens ─────────────────────────────────────────────────
         refresh = RefreshToken.for_user(user)
-        # Embed role in token payload
         refresh['role']     = user.role
         refresh['username'] = user.username
 
@@ -253,7 +234,6 @@ class RegenerateInviteView(APIView):
         try:
             config, _ = EmailConfiguration.objects.get_or_create(id=1)
 
-            # ✅ Use instance attributes, not class-level
             to_email = parent.email.strip()
             if not to_email:
                 return Response({"error": "Recipient email is required."})
@@ -279,15 +259,12 @@ class RegenerateInviteView(APIView):
 
             subject = f"{config.school_name} - App Invitation"
 
-            # ✅ Use the `wards` property from Parent model — returns a Student queryset
             wards = parent.wards  
             student_rows = ""
             for w in wards:
-                # ✅ Use Student fields: full_name, and class_obj (ForeignKey on Student)
                 class_name = w.class_obj.class_name if w.class_obj else "N/A"
                 student_rows += f"<tr><td><strong>{w.full_name}</strong> — {class_name}</td></tr>"
 
-            # ✅ Use the first ward for the primary student reference in the email body
             primary_student = wards.first()
             primary_student_name = primary_student.full_name if primary_student else "your child"
             primary_class = primary_student.class_obj.class_name if primary_student and primary_student.class_obj else "N/A"
@@ -584,7 +561,6 @@ class RegenerateInviteView(APIView):
             parent=parent,
             created_by=request.user,
         )
-        #email implimentation 
         self.app_invite_email(parent=parent, invite=invite)
  
         
@@ -597,7 +573,6 @@ class RegenerateInviteView(APIView):
         }, status=status.HTTP_201_CREATED)
     
 
-# views.py
 class RevokeInviteView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -611,7 +586,6 @@ class RevokeInviteView(APIView):
         except Parent.DoesNotExist:
             return Response({'error': 'Parent not found.'}, status=404)
 
-        # Mark all active invites for this parent as used
         updated = ParentInvite.objects.filter(
             parent=parent,
             used=False,

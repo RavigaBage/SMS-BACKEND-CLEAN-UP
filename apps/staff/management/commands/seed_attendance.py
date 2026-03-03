@@ -1,63 +1,81 @@
 import random
-from datetime import date, time, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 from django.db import transaction
+from django.utils import timezone
+
 from apps.staff.models import Staff, StaffAttendance
 
-class Command(BaseCommand):
-    help = 'Seeds the database with realistic staff attendance for Feb 2026'
 
-    def handle(self, *args, **kwargs):
+class Command(BaseCommand):
+    help = "Seed realistic staff attendance for pagination/testing."
+
+    def add_arguments(self, parser):
+        parser.add_argument("--days", type=int, default=60, help="How many recent days to seed.")
+        parser.add_argument("--skip-weekends", action="store_true", help="Skip Saturday/Sunday records.")
+
+    def handle(self, *args, **options):
+        days = max(1, int(options["days"]))
+        skip_weekends = options["skip_weekends"]
+
         staff_members = Staff.objects.all()
         if not staff_members.exists():
-            self.stdout.write(self.style.ERROR('No staff found. Please add staff first.'))
+            self.stdout.write(self.style.ERROR("No staff found. Run seed_staff first."))
             return
 
-        # Start from Monday, Feb 2, 2026
-        start_date = date(2026, 2, 2)
-        days_to_seed = 5  # Mon to Fri
+        self.stdout.write(
+            self.style.NOTICE(
+                f"Seeding attendance for {staff_members.count()} staff across {days} days..."
+            )
+        )
 
-        self.stdout.write(f'Seeding attendance for {staff_members.count()} staff members...')
-
+        seeded = 0
+        start_date = date.today() - timedelta(days=days - 1)
         with transaction.atomic():
-            for day_offset in range(days_to_seed):
+            for day_offset in range(days):
                 current_date = start_date + timedelta(days=day_offset)
-                
+                if skip_weekends and current_date.weekday() >= 5:
+                    continue
+
                 for staff in staff_members:
-                    # Randomize scenarios
                     rand = random.random()
-                    
                     status = StaffAttendance.AttendanceStatus.PRESENT
                     remarks = ""
-                    # Random arrival between 7:30 and 8:15
-                    arrival_min = random.randint(30, 75) 
-                    c_in = timezone.make_aware(datetime.combine(current_date, time(7, 0)) + timedelta(minutes=arrival_min))
-                    # Random departure between 16:00 and 17:00
-                    c_out = timezone.make_aware(datetime.combine(current_date, time(16, 0)) + timedelta(minutes=random.randint(0, 60)))
 
-                    if rand < 0.05:  # 5% chance of Absence
+                    arrival_min = random.randint(25, 80)
+                    c_in = timezone.make_aware(
+                        datetime.combine(current_date, time(7, 0)) + timedelta(minutes=arrival_min)
+                    )
+                    c_out = timezone.make_aware(
+                        datetime.combine(current_date, time(16, 0)) + timedelta(minutes=random.randint(0, 90))
+                    )
+
+                    if rand < 0.06:
                         status = StaffAttendance.AttendanceStatus.ABSENT
                         c_in, c_out, remarks = None, None, "Unexcused absence"
-                    elif rand < 0.10:  # 5% chance of On Leave
+                    elif rand < 0.12:
                         status = StaffAttendance.AttendanceStatus.ON_LEAVE
-                        c_in, c_out, remarks = None, None, "Planned medical leave"
-                    elif rand < 0.15:  # 5% chance of Half Day
+                        c_in, c_out, remarks = None, None, "Approved leave"
+                    elif rand < 0.18:
                         status = StaffAttendance.AttendanceStatus.HALF_DAY
                         c_out = timezone.make_aware(datetime.combine(current_date, time(12, 0)))
-                        remarks = "Early departure (Personal)"
-                    elif arrival_min > 60: # After 8:00 AM
+                        remarks = "Half day"
+                    elif arrival_min > 60:
                         remarks = "Arrived late"
 
                     StaffAttendance.objects.update_or_create(
                         staff=staff,
                         attendance_date=current_date,
                         defaults={
-                            'check_in': c_in,
-                            'check_out': c_out,
-                            'status': status,
-                            'remarks': remarks
-                        }
+                            "check_in": c_in,
+                            "check_out": c_out,
+                            "status": status,
+                            "remarks": remarks,
+                        },
                     )
+                    seeded += 1
 
-        self.stdout.write(self.style.SUCCESS(f'Successfully seeded attendance for {current_date}'))
+        self.stdout.write(
+            self.style.SUCCESS(f"Attendance seed complete. Upserted {seeded} records.")
+        )

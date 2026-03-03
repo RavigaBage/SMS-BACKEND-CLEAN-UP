@@ -1,4 +1,3 @@
-# apps/settings/models.py
 
 from django.db import models
 

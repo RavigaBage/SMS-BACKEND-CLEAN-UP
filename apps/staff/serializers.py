@@ -41,7 +41,7 @@ class StaffSerializer(serializers.ModelSerializer):
         from apps.academic.serializers import AssignedClassSerializer
         try:
             
-            if hasattr(obj.user, 'teacher_profile'): # Adjust based on your Teacher model's related_name
+            if hasattr(obj.user, 'teacher_profile'): 
                 classes = obj.user.teacher_profile.assigned_classes.all()
                 return AssignedClassSerializer(classes, many=True).data
         except Exception:
@@ -52,12 +52,10 @@ class StaffSerializer(serializers.ModelSerializer):
 class StaffCreateSerializer(serializers.Serializer):
     """Serializer for creating staff with user account"""
     
-    # User fields
     username = serializers.CharField(required=False)
     email = serializers.EmailField(required=False)
     password = serializers.CharField(required=False, write_only=True, min_length=10)
     
-    # Staff fields
     first_name = serializers.CharField(max_length=50)
     last_name = serializers.CharField(max_length=50)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
@@ -71,7 +69,6 @@ class StaffCreateSerializer(serializers.Serializer):
     health_info = serializers.CharField(required=False, allow_blank=True)
     photo_url = serializers.URLField(required=False, allow_blank=True)
     
-    # Salary fields (optional)
     base_salary = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
     housing_allowance = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
     transport_allowance = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
@@ -179,6 +176,6 @@ class LeaveApprovalSerializer(serializers.Serializer):
 class StaffClassroomSerializer(serializers.Serializer):
     """Simplified classroom serializer for nesting inside Staff"""
     id = serializers.IntegerField(read_only=True)
-    name = serializers.CharField(read_only=True) # e.g., "Grade 10 - Math"
+    name = serializers.CharField(read_only=True) 
     subject_name = serializers.CharField(read_only=True)
     student_count = serializers.IntegerField(read_only=True)

@@ -20,11 +20,9 @@ class StudentMinimalSerializer(serializers.ModelSerializer):
 
 
 class GradeSerializer(serializers.ModelSerializer):
-    # Read-only nested serializers
     student = StudentMinimalSerializer(read_only=True)
     subject = SubjectSerializer(read_only=True)
     
-    # Write-only fields for creating/updating
     student_id = serializers.PrimaryKeyRelatedField(
         queryset=Student.objects.all(),
         source='student',
@@ -39,13 +37,11 @@ class GradeSerializer(serializers.ModelSerializer):
     )
     class_id = serializers.PrimaryKeyRelatedField(
         queryset=Class.objects.all(),
-        source='class_obj',  # This matches your model field name
+        source='class_obj', 
         write_only=True,
         required=False
     )
     
-    
-    # Computed fields
     percentage = serializers.SerializerMethodField()
     subject_rank = serializers.SerializerMethodField()
     class_average = serializers.SerializerMethodField() 
@@ -78,15 +74,21 @@ class GradeSerializer(serializers.ModelSerializer):
         """
         Validate that the combination is unique (only on create)
         """
-        if not self.instance:  # Only validate on create, not update
+        class_obj = data.get('class_obj') or getattr(self.instance, 'class_obj', None)
+        subject = data.get('subject') or getattr(self.instance, 'subject', None)
+
+        if class_obj and subject and not class_obj.subjects.filter(pk=subject.pk).exists():
+            raise serializers.ValidationError(
+                "this subject has not been assigned to this class, contact your administrator."
+            )
+
+        if not self.instance: 
             student = data.get('student')
-            class_obj = data.get('class_obj')
-            subject = data.get('subject')
             academic_year = data.get('academic_year')
             term = data.get('term')
 
             if all([student, class_obj, subject, academic_year, term]):
-                # Check if grade already exists
+              
                 existing = Grade.objects.filter(
                     student=student,
                     class_obj=class_obj,
@@ -115,20 +117,44 @@ class StudentTranscriptSerializer(serializers.ModelSerializer):
         parts = year.split('-')
         
         if len(parts) == 2:
-            start = parts[0]          # "2025"
-            end   = parts[1]          # "26" or "2026"
-            if len(end) == 2:         # short form like "25-26"
-                end = start[:2] + end # "2025" + "26" → "2026"
+            start = parts[0]         
+            end   = parts[1]      
+            if len(end) == 2:       
+                end = start[:2] + end
             return f"{start}-{end}"
         
         return year 
+    
+    def _resolve_enrollment(self, obj):
+        """Single source of truth for resolving the correct enrollment."""
+        class_id    = self.context.get('class_id')
+        target_year = self.context.get('academic_year')
+
+        enrollment_qs = obj.enrollments.select_related('class_obj')
+
+        if class_id:
+            enrollment_qs = enrollment_qs.filter(class_obj_id=class_id)
+
+        if target_year:
+            normalised = self.normalise_year(target_year)
+            year_variants = {
+                normalised,
+                normalised.replace('-', '/'),     
+                normalised[:4] + '-' + normalised[-2:],
+                normalised[:4] + '/' + normalised[-2:],
+            }
+            enrollment_qs = enrollment_qs.filter(
+                class_obj__academic_year__in=year_variants
+            )
+
+        return enrollment_qs.first()
+
 
     def get_summary(self, obj):
-        enrollment = obj.enrollments.first()
+        enrollment = self._resolve_enrollment(obj)
         if not enrollment: return None
         
         target_year = str(enrollment.class_obj.academic_year).split(' ')[0].replace('/', '-')
-        # Assume First Term if not specified, or pull from latest grade
         term = obj.academic_grades.filter(academic_year=target_year).values_list('term', flat=True).first() or "First Term"
 
         rank_data = AcademicReportGenerator.get_specific_student_rank(
@@ -146,31 +172,87 @@ class StudentTranscriptSerializer(serializers.ModelSerializer):
         }
 
     def get_grades(self, obj):
-        enrollment = obj.enrollments.select_related('class_obj').first()
+        enrollment = self._resolve_enrollment(obj)
         if not enrollment:
             return []
 
         target_year = self.normalise_year(enrollment.class_obj.academic_year)
 
-        # ✅ filter using all possible formats so nothing slips through
-        grades_queryset = obj.academic_grades.filter(
-            academic_year__in=[
-                target_year,                        # "2025-2026"
-                target_year[:4] + '-' + target_year[-2:],  # "2025-26"
-            ]
+        class_subjects = enrollment.class_obj.subjects.all()
+
+        year_variants = {
+            target_year,
+            target_year.replace('-', '/'),          
+            target_year[:4] + '-' + target_year[-2:],  
+            target_year[:4] + '/' + target_year[-2:],         
+        }
+        print(year_variants,target_year)
+
+        grades_qs = obj.academic_grades.filter(
+            academic_year__in=year_variants
         ).select_related('subject', 'student')
 
-        if not grades_queryset.exists():
-            return []
+        terms = list({g.term for g in grades_qs})
+
+        if not terms:
+            return [
+                {
+                    "id": None,
+                    "student": StudentMinimalSerializer(obj).data,
+                    "subject": SubjectSerializer(subject).data,
+                    "academic_year": target_year,
+                    "term": None,
+                    "total_score": None,
+                    "grade_letter": None,
+                    "percentage": None,
+                    "subject_rank": None,
+                    "class_average": None,
+                    "assessment_score": None, "assessment_total": None,
+                    "test_score": None,       "test_total": None,
+                    "exam_score": None,       "exam_total": None,
+                    "weighted_assessment": None,
+                    "weighted_test": None,    "weighted_exam": None,
+                    "remarks": None,
+                }
+                for subject in class_subjects
+            ]
+
+        grades_by_subject_term = {
+            (g.subject_id, g.term): g for g in grades_qs
+        }
 
         s_map   = AcademicReportGenerator.get_subject_ranks_dict(enrollment.class_obj_id, target_year)
         avg_map = AcademicReportGenerator.get_subject_averages(enrollment.class_obj_id, target_year)
+        context = {'subject_ranks': s_map, 'subject_averages': avg_map}
 
-        return GradeSerializer(
-            grades_queryset, many=True,
-            context={'subject_ranks': s_map, 'subject_averages': avg_map}
-        ).data
+        result = []
+        for term in terms:                       
+            for subject in class_subjects:
+                grade = grades_by_subject_term.get((subject.id, term))
 
+                if grade:
+                    result.append(GradeSerializer(grade, context=context).data)
+                else:
+                    result.append({
+                        "id": None,
+                        "student": StudentMinimalSerializer(obj).data,
+                        "subject": SubjectSerializer(subject).data,
+                        "academic_year": target_year,
+                        "term": term,
+                        "total_score": None,
+                        "grade_letter": None,
+                        "percentage": None,
+                        "subject_rank": None,
+                        "class_average": avg_map.get((subject.id, term)),
+                        "assessment_score": None, "assessment_total": None,
+                        "test_score": None,       "test_total": None,
+                        "exam_score": None,       "exam_total": None,
+                        "weighted_assessment": None,
+                        "weighted_test": None,    "weighted_exam": None,
+                        "remarks": None,
+                    })
+
+        return result
 
 class ClassStudentListSerializer(serializers.ModelSerializer):
     """
@@ -195,7 +277,7 @@ class ClassStudentListSerializer(serializers.ModelSerializer):
         ]
 
     def get_full_name(self, obj):
-        return obj.full_name # Uses the @property from your Student model
+        return obj.full_name 
 
     def get_current_class(self, obj):
         """
@@ -213,11 +295,9 @@ class ClassStudentListSerializer(serializers.ModelSerializer):
         if enrollment:
             return enrollment.class_obj.class_name
         return "Not Enrolled"
-# -----------------------------
-# 5. Ranking Utilities
-# -----------------------------
+
 def get_subject_ranks(class_id, academic_year_str):
-        # Ensure we are filtering by the string value of the year
+       
         grades = Grade.objects.filter(
             class_obj_id=class_id, 
             academic_year=str(academic_year_str) 
@@ -229,7 +309,6 @@ def get_subject_ranks(class_id, academic_year_str):
             )
         )
 
-        # Force keys to standard types: (int, int, str)
         return {
             (int(g.student_id), int(g.subject_id), str(g.term)): g.rank 
             for g in grades

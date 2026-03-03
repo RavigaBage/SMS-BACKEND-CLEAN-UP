@@ -78,7 +78,6 @@ class TeacherCreateSerializer(serializers.ModelSerializer):
         if user.role != 'teacher':
             raise serializers.ValidationError("User must have 'teacher' role")
         
-        # Check if teacher profile already exists
         if hasattr(user, 'teacher_profile'):
             raise serializers.ValidationError("Teacher profile already exists for this user")
         

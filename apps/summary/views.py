@@ -1,5 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework import status
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth
@@ -21,9 +22,7 @@ class DashboardSummary(APIView):
     def get(self, request):
 
         try:
-            # ==========================
-            # COUNTS SECTION
-            # ==========================
+            
             try:
                 student_count = Student.objects.count()
                 staff_count = Staff.objects.count()
@@ -39,21 +38,18 @@ class DashboardSummary(APIView):
             try:
                 today = timezone.now().date()
                 
-                # 1. Get Student Attendance Stats
                 total_students = Student.objects.count()
                 present_students = StudentAttendance.objects.filter(
                     attendance_date=today,
                     status__in=['present', 'half_day']
                 ).count()
 
-                # 2. Get Staff Attendance Stats
                 total_staff = Staff.objects.count()
                 present_staff = StaffAttendance.objects.filter(
                     attendance_date=today,
                     status__in=['present', 'half_day']
                 ).count()
 
-                # 3. Calculate Overall Percentage
                 total_people = total_students + total_staff
                 total_present = present_students + present_staff
 
@@ -64,12 +60,9 @@ class DashboardSummary(APIView):
 
             except Exception as e:
                 logger.error(f"Error calculating attendance: {str(e)}")
-                active_attendance_pct = 0.0  # Fallback
+                active_attendance_pct = 0.0
 
 
-            # ==========================
-            # RECENT TRANSACTIONS
-            # ==========================
             try:
                 recent_payments = (
                     Payment.objects
@@ -121,10 +114,6 @@ class DashboardSummary(APIView):
                 logger.error(f"Error fetching activities: {str(e)}", exc_info=True)
                 raise e
 
-
-            # ==========================
-            # MONTHLY REVENUE CHART
-            # ==========================
             try:
                 monthly_revenue = (
                     Payment.objects
@@ -145,10 +134,6 @@ class DashboardSummary(APIView):
                 logger.error(f"Error generating chart data: {str(e)}", exc_info=True)
                 raise e
 
-
-            # ==========================
-            # FINAL RESPONSE
-            # ==========================
             return Response({
                 "student_count": student_count,
                 "staff_count": staff_count,
@@ -162,7 +147,7 @@ class DashboardSummary(APIView):
                 }
             })
 
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error loading dashboard: {str(e)}")
 
             if hasattr(e, 'message_dict'):
@@ -208,3 +193,4 @@ class DashboardSummary(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
+

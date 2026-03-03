@@ -6,7 +6,6 @@ from django.http import JsonResponse
 from rest_framework import routers
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from rest_framework_simplejwt.views import TokenRefreshView
-# Import views
 from apps.accounts.views import UserViewSet, LoginView, RefreshTokenView, LogoutView, CurrentUserView, health_check
 from apps.staff.views import (
     StaffViewSet, SalaryStructureViewSet, SalaryPaymentViewSet,
@@ -34,11 +33,17 @@ from apps.schoolapp.views import (
     RegenerateInviteView,
     RevokeInviteView
 )
+from apps.studentManager.views import (
+    StudentProgressionListView,
+    StudentProgressionCreateView,
+    StudentProgressionDetailView,
+    bulk_promote,
+    seed_class_progressions,
+)
+
 from apps.settings.views import email_settings, test_email
-# Create router
 router = routers.DefaultRouter()
 
-# Register viewsets
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'staff', StaffViewSet, basename='staff')
 router.register(r'salary-structures', SalaryStructureViewSet, basename='salary-structure')
@@ -97,11 +102,16 @@ urlpatterns = [
     path('auth/refresh/',  TokenRefreshView.as_view(), name='auth_refresh'),
     path('auth/me/',       MeView.as_view(),           name='auth_me'),
 
-    # ── Parent invite flow ────────────────────────────────────────────────────
     path('auth/invite/check/',        CheckInviteView.as_view(),       name='invite_check'),
     path('auth/invite/redeem/',       RedeemInviteView.as_view(),      name='invite_redeem'),
     path('auth/invite/regenerate/',   RegenerateInviteView.as_view(),  name='invite_regenerate'),
     path('auth/invite/revoke/', RevokeInviteView.as_view(), name='invite_revoke'),
+
+    path('academics/studentmanager/', StudentProgressionListView.as_view(), name='progression-list'),
+    path('academics/studentmanager/create/', StudentProgressionCreateView.as_view(), name='progression-create'),
+    path('academics/studentmanager/<int:pk>/', StudentProgressionDetailView.as_view(), name='progression-detail'),
+    path('academics/studentmanager/bulk-promote/', bulk_promote, name='progression-bulk-promote'),
+    path('seed/', seed_class_progressions, name='progression-seed'),
 ]
 
 if settings.DEBUG:

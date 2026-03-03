@@ -14,7 +14,7 @@ class User(AbstractUser):
         HEADMASTER  = 'headmaster',  _('Headmaster')
         BURSAR      = 'bursar',      _('Bursar')
         TEACHER     = 'teacher',     _('Teacher')
-        PARENT      = 'parent',      _('Parent')   # ← added
+        PARENT      = 'parent',      _('Parent')  
 
     role = models.CharField(
         max_length=20,

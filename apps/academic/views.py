@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q, Count
 from .models import AcademicYear, Class, Subject, Enrollment, SubjectAssignment
+from django.db.models import Q
 from .serializers import (
     AcademicYearSerializer, ClassSerializer, SubjectSerializer,
     EnrollmentSerializer, SubjectAssignmentSerializer, ClassDetailSerializer
@@ -11,11 +12,10 @@ from .serializers import (
 from apps.accounts.permissions import CanManageStudents, IsAdminOrHeadmaster
 from apps.permissions.mixins import SchoolWriteMixin, handle_viewset_exception
 import logging
+from apps.studentManager.services import ProgressionService
 
 logger = logging.getLogger(__name__)
 
-
-# ─── AcademicYear ─────────────────────────────────────────────────────────────
 
 class AcademicYearViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset         = AcademicYear.objects.all().order_by("-start_date")
@@ -53,8 +53,6 @@ class AcademicYearViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
             return handle_viewset_exception(e, "setting academic year as current")
 
 
-# ─── Subject ──────────────────────────────────────────────────────────────────
-
 class SubjectViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset         = Subject.objects.all().order_by("subject_code")
     serializer_class = SubjectSerializer
@@ -79,10 +77,8 @@ class SubjectViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
         return queryset
 
 
-# ─── Class ────────────────────────────────────────────────────────────────────
-
 class ClassViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
-    queryset = Class.objects.select_related("class_teacher").all()
+    queryset = Class.objects.select_related("class_teacher").prefetch_related("subjects").all()
     serializer_teacher_field = "class_teacher"
     ownership_teacher_field  = "class_teacher"
 
@@ -95,7 +91,7 @@ class ClassViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        qs = Class.objects.all()
+        qs = Class.objects.select_related("class_teacher").prefetch_related("subjects").all()
         academic_year = self.request.query_params.get("academic_year")
         grade_level  = self.request.query_params.get("grade_level")
         teacher_id   = self.request.query_params.get("teacher_id")
@@ -140,8 +136,6 @@ class ClassViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
             return handle_viewset_exception(e, f"retrieving statistics for class {pk}")
 
 
-# ─── Enrollment ───────────────────────────────────────────────────────────────
-
 class EnrollmentViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset         = Enrollment.objects.select_related("student", "class_obj").all()
     serializer_class = EnrollmentSerializer
@@ -155,6 +149,7 @@ class EnrollmentViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
         student_id    = self.request.query_params.get("student_id")
         class_id      = self.request.query_params.get("class_id")
         status_filter = self.request.query_params.get("status")
+        academic_year = self.request.query_params.get("academic_year")
 
         if student_id:
             queryset = queryset.filter(student_id=student_id)
@@ -162,10 +157,16 @@ class EnrollmentViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(class_obj_id=class_id)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
+        if academic_year:
+            queryset = queryset.filter(
+                Q(academic_year=academic_year) |
+                Q(academic_year="", class_obj__academic_year=academic_year)
+            )
         return queryset
 
-
-# ─── SubjectAssignment ────────────────────────────────────────────────────────
+    def perform_create(self, serializer):
+        enrollment = serializer.save()
+        ProgressionService.handle_new_enrollment(enrollment)
 
 class SubjectAssignmentViewSet(SchoolWriteMixin, viewsets.ModelViewSet):
     queryset         = SubjectAssignment.objects.select_related("class_obj", "subject", "teacher").all()

@@ -35,6 +35,11 @@ class ClassSerializer(serializers.ModelSerializer):
     class_teacher_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     academic_year_name = serializers.CharField(source='academic_year.year_name', read_only=True)
     current_enrollment = serializers.IntegerField(read_only=True)
+    subjects = serializers.PrimaryKeyRelatedField(
+        queryset=Subject.objects.all(),
+        many=True,
+        required=False
+    )
 
     def validate(self, attrs):
         grade_level   = attrs.get("grade_level")
@@ -46,7 +51,7 @@ class ClassSerializer(serializers.ModelSerializer):
             section=section,
             academic_year=academic_year
         )
-        if self.instance:  # exclude self on updates
+        if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
 
         if qs.exists():
@@ -60,7 +65,7 @@ class ClassSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'class_name', 'grade_level', 'section',
             'academic_year', 'academic_year_name','class_teacher', 'teacher_name', 'class_teacher_id',
-            'capacity', 'current_enrollment', 'room_number'
+            'capacity', 'current_enrollment', 'room_number', 'subjects'
         ]
         read_only_fields = ['id']
 
@@ -81,12 +86,25 @@ class EnrollmentSerializer(serializers.ModelSerializer):
     )
     
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    def validate(self, attrs):
+        class_obj = attrs.get('class_obj') or getattr(self.instance, 'class_obj', None)
+        academic_year = attrs.get('academic_year')
+
+        # On create, if caller does not provide academic_year, default to class year.
+        if self.instance is None and not academic_year and class_obj:
+            attrs['academic_year'] = class_obj.academic_year
+        elif isinstance(academic_year, str):
+            attrs['academic_year'] = academic_year.strip()
+
+        return attrs
     
     class Meta:
         model = Enrollment
         fields = [
             'id', 'student', 'student_id', 'class_obj', 'class_id',
-            'enrollment_date', 'status', 'status_display', 'roll_number'
+            'enrollment_date', 'status', 'status_display', 'roll_number',
+            'academic_year'
         ]
         read_only_fields = ['id', 'enrollment_date']
 
@@ -117,6 +135,7 @@ class ClassDetailSerializer(serializers.ModelSerializer):
     enrollments = EnrollmentSerializer(many=True, read_only=True)
     subject_assignments = SubjectAssignmentSerializer(many=True, read_only=True)
     current_enrollment = serializers.IntegerField(read_only=True)
+    subjects = SubjectSerializer(many=True, read_only=True)
     
     class Meta:
         model = Class
@@ -124,7 +143,7 @@ class ClassDetailSerializer(serializers.ModelSerializer):
             'id', 'class_name', 'grade_level', 'section',
             'academic_year', 'class_teacher', 'capacity',
             'current_enrollment', 'room_number',
-            'enrollments', 'subject_assignments'
+            'subjects', 'enrollments', 'subject_assignments'
         ]
 
 class AssignedClassSerializer(serializers.ModelSerializer):

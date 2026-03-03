@@ -67,7 +67,6 @@ class StaffViewSet(viewsets.ModelViewSet):
             'photo_url': serializer.validated_data.get('photo_url', ''),
         }
         
-        # User data (optional)
         user_data = {}
         if 'username' in serializer.validated_data:
             user_data['username'] = serializer.validated_data['username']
@@ -76,7 +75,6 @@ class StaffViewSet(viewsets.ModelViewSet):
         if 'password' in serializer.validated_data:
             user_data['password'] = serializer.validated_data['password']
         
-        # Salary data (optional)
         if 'base_salary' in serializer.validated_data:
             staff_data['salary'] = {
                 'base_salary': serializer.validated_data.get('base_salary', 0),
@@ -86,7 +84,6 @@ class StaffViewSet(viewsets.ModelViewSet):
                 'effective_from': serializer.validated_data.get('salary_effective_from'),
             }
         
-        # Create staff with exception handling
         service = StaffService()
         try:
             result = service.create_staff_with_user(
@@ -97,7 +94,6 @@ class StaffViewSet(viewsets.ModelViewSet):
             
             response_data = StaffSerializer(result['staff']).data
             
-            # Include generated credentials if password was auto-generated
             if result['generated_password']:
                 response_data['credentials'] = {
                     'username': result['username'],
@@ -122,21 +118,20 @@ class StaffViewSet(viewsets.ModelViewSet):
             )
             
         except IntegrityError as e:
-            # Handle database integrity errors
             logger.error(f"Integrity error creating staff: {str(e)}")
             return Response('Database Error: A database constraint was violated. This may be due to duplicate data.',
                 status=status.HTTP_400_BAD_REQUEST
             )
             
         except PermissionError as e:
-            # Handle permission errors
+       
             logger.error(f"Permission error creating staff: {str(e)}")
             return Response(f"Permission Denied:{str(e)}",
                 status=status.HTTP_403_FORBIDDEN
             )
             
         except Exception as e:
-            # Handle unexpected errors
+       
             logger.error(f"Unexpected error creating staff: {str(e)}", exc_info=True)
             return Response('Server Error An unexpected error occurred while creating the staff member.',
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -277,7 +272,6 @@ class SalaryStructureViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by staff
         staff_id = self.request.query_params.get('staff_id', None)
         if staff_id:
             queryset = queryset.filter(staff_id=staff_id)
@@ -327,7 +321,7 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
                     'payment_id': salary_payment.id,
                 })
             except ValidationError as e:
-                # Salary already processed, no salary structure, etc. — skip gracefully
+         
                 results.append({
                     'staff_id':   staff.id,
                     'staff_name': staff.full_name,
@@ -361,17 +355,16 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by staff
         staff_id = self.request.query_params.get('staff_id', None)
         if staff_id:
             queryset = queryset.filter(staff_id=staff_id)
         
-        # Filter by status
+
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
-        # Filter by payment period
+  
         payment_period = self.request.query_params.get('payment_period', None)
         if payment_period:
             queryset = queryset.filter(payment_period=payment_period)
@@ -509,17 +502,14 @@ class StaffAttendanceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by staff ID
         staff_id = self.request.query_params.get('staff_id', None)
         if staff_id:
             queryset = queryset.filter(staff_id=staff_id)
         
-        # Filter by role/staff type
         role = self.request.query_params.get('role', None)
         if role:
             queryset = queryset.filter(staff__staff_type__icontains=role)
         
-        # Filter by search (staff name)
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -528,18 +518,15 @@ class StaffAttendanceViewSet(viewsets.ModelViewSet):
                 Q(staff__email__icontains=search)
             )
         
-        # Filter by specific date
         date = self.request.query_params.get('date', None)
         if date:
             queryset = queryset.filter(attendance_date=date)
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         if start_date and end_date:
             queryset = queryset.filter(attendance_date__range=[start_date, end_date])
         
-        # Filter by status
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -557,16 +544,13 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Teachers can only see their own leave requests
         if self.request.user.role == 'teacher':
             queryset = queryset.filter(staff__user=self.request.user)
         
-        # Filter by staff
         staff_id = self.request.query_params.get('staff_id', None)
         if staff_id:
             queryset = queryset.filter(staff_id=staff_id)
         
-        # Filter by status
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -574,7 +558,7 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         return queryset
     
     def perform_create(self, serializer):
-        # If teacher, automatically set staff to their own profile
+      
         if self.request.user.role == 'teacher':
             serializer.save(staff=self.request.user.staff_profile)
         else:

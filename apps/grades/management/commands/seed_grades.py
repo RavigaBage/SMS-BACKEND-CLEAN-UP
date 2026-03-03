@@ -1,75 +1,99 @@
 import random
 from decimal import Decimal
+
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from apps.grades.models import Grade
-from apps.academic.models import Subject, Enrollment
+
 from apps.accounts.models import User
+from apps.academic.models import Enrollment, Subject
+from apps.grades.models import Grade
+
 
 class Command(BaseCommand):
-    help = 'Seeds grades with a realistic spread from lowest to highest'
+    help = "Seed grades with realistic spread across students/subjects/terms."
 
-    def handle(self, *args, **kwargs):
-        self.stdout.write("Seeding Grades...")
+    def add_arguments(self, parser):
+        parser.add_argument("--year", type=str, default="2025-2026")
+        parser.add_argument(
+            "--terms",
+            type=str,
+            default="first,second,third",
+            help="Comma-separated terms from: first,second,third",
+        )
+        parser.add_argument(
+            "--reset",
+            action="store_true",
+            help="Delete existing grades for selected year/terms before seeding.",
+        )
 
-        admin_user = User.objects.filter(role='admin').first()
-        enrollments = Enrollment.objects.select_related('student', 'class_obj').all()
-        subjects = Subject.objects.all()
+    def handle(self, *args, **options):
+        year_name = options["year"].strip()
+        terms = [t.strip().lower() for t in options["terms"].split(",") if t.strip()]
+        reset = options["reset"]
 
-        if not enrollments.exists() or not subjects.exists():
-            self.stdout.write(self.style.ERROR("Missing Enrollments or Subjects. Run previous seeds first!"))
+        valid_terms = {choice[0] for choice in Grade.Term.choices}
+        terms = [t for t in terms if t in valid_terms]
+        if not terms:
+            terms = [Grade.Term.FIRST]
+
+        admin_user = User.objects.filter(role=User.Role.ADMIN).first()
+        enrollments = list(
+            Enrollment.objects.select_related("student", "class_obj").filter(
+                status=Enrollment.EnrollmentStatus.ACTIVE
+            )
+        )
+        subjects = list(Subject.objects.all())
+
+        if not enrollments or not subjects:
+            self.stdout.write(
+                self.style.ERROR("Missing enrollments or subjects. Run academic/students seed first.")
+            )
             return
 
+        self.stdout.write(self.style.NOTICE("Seeding grades..."))
         with transaction.atomic():
-            # We will clear existing grades to avoid unique_together conflicts
-            Grade.objects.all().delete()
+            if reset:
+                Grade.objects.filter(academic_year=year_name, term__in=terms).delete()
 
-            # Weighting Logic: 
-            # Assessment (20%), Test (30%), Exam (50%)
-            
+            created_or_updated = 0
+            sorted_enrollments = sorted(enrollments, key=lambda e: (e.class_obj_id, e.student.first_name))
+            total_students = len(sorted_enrollments)
+
             for subject in subjects:
-                # Sort enrollments by student name to apply a consistent spread
-                sorted_enrollments = sorted(enrollments, key=lambda e: e.student.first_name)
-                total_students = len(sorted_enrollments)
-
                 for index, enrollment in enumerate(sorted_enrollments):
-                    # Progress from 0.0 to 1.0 based on position in the list
                     progression = index / (total_students - 1) if total_students > 1 else 0.5
-                    
-                    # Calculate raw scores (out of 100)
-                    # Lowest: ~30, Highest: ~98
-                    base_score = 30 + (progression * 65) + random.uniform(-3, 3)
-                    base_score = min(max(base_score, 0), 100)
+                    base_score = 35 + (progression * 60) + random.uniform(-4, 4)
+                    base_score = float(min(max(base_score, 0), 100))
 
-                    # Calculate Weighted components
-                    # Assessment: 20% of base
-                    w_assessment = Decimal(base_score * 0.20).quantize(Decimal('0.00'))
-                    # Test: 30% of base
-                    w_test = Decimal(base_score * 0.30).quantize(Decimal('0.00'))
-                    # Exam: 50% of base
-                    w_exam = Decimal(base_score * 0.50).quantize(Decimal('0.00'))
+                    assessment = Decimal(base_score * 0.20).quantize(Decimal("0.01"))
+                    test = Decimal(base_score * 0.30).quantize(Decimal("0.01"))
+                    exam = Decimal(base_score * 0.50).quantize(Decimal("0.01"))
 
-                    Grade.objects.create(
-                        student=enrollment.student,
-                        subject=subject,
-                        class_obj=enrollment.class_obj,
-                        enrollment=enrollment,
-                        entered_by=admin_user,
-                        academic_year="2025-2026",
-                        term=Grade.Term.FIRST,
-                        grade_type=Grade.GradeType.FINAL,
-                        
-                        # Raw Score inputs
-                        assessment_score=Decimal(base_score),
-                        test_score=Decimal(base_score),
-                        exam_score=Decimal(base_score),
-                        
-                        # Weighted values (used by your save() method)
-                        weighted_assessment=w_assessment,
-                        weighted_test=w_test,
-                        weighted_exam=w_exam,
-                        
-                        remarks="Performance tracked via automated seed."
-                    )
+                    for term in terms:
+                        _, created = Grade.objects.update_or_create(
+                            student=enrollment.student,
+                            subject=subject,
+                            class_obj=enrollment.class_obj,
+                            academic_year=year_name,
+                            term=term,
+                            defaults={
+                                "enrollment": enrollment,
+                                "entered_by": admin_user,
+                                "grade_type": Grade.GradeType.FINAL,
+                                "assessment_score": Decimal(base_score).quantize(Decimal("0.01")),
+                                "test_score": Decimal(base_score).quantize(Decimal("0.01")),
+                                "exam_score": Decimal(base_score).quantize(Decimal("0.01")),
+                                "weighted_assessment": assessment,
+                                "weighted_test": test,
+                                "weighted_exam": exam,
+                                "remarks": "Auto-seeded for pagination and test data.",
+                            },
+                        )
+                        created_or_updated += 1
 
-        self.stdout.write(self.style.SUCCESS(f"Successfully seeded grades for {enrollments.count()} students across {subjects.count()} subjects!"))
+        total = Grade.objects.filter(academic_year=year_name, term__in=terms).count()
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Grades seed complete. Upserted {created_or_updated} rows. Total now {total} for {year_name}."
+            )
+        )

@@ -1,88 +1,241 @@
+﻿from datetime import date
+import random
+
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from datetime import date
-from apps.academic.models import AcademicYear, Class, Subject, Enrollment, SubjectAssignment
+
+from apps.academic.models import (
+    AcademicYear,
+    Class,
+    Enrollment,
+    Subject,
+    SubjectAssignment,
+)
+from apps.staff.models import Staff
 from apps.students.models import Student
-from apps.staff.models import Staff  # Assumes Staff exist
+from apps.teachers.models import Teacher
+
 
 class Command(BaseCommand):
-    help = 'Populates academic years, subjects, classes, and enrollments'
+    help = "Populate academic year, classes, subjects, students, and enrollments."
 
-    def handle(self, *args, **kwargs):
-        self.stdout.write("Seeding Academic Data...")
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--year",
+            type=str,
+            default="2025-2026",
+            help="Academic year label (example: 2025-2026).",
+        )
+        parser.add_argument(
+            "--grades",
+            type=str,
+            default="1,2,3",
+            help="Comma-separated grade levels (example: 1,2,3).",
+        )
+        parser.add_argument(
+            "--sections",
+            type=str,
+            default="A,B",
+            help="Comma-separated sections (example: A,B).",
+        )
+        parser.add_argument(
+            "--students-per-section",
+            type=int,
+            default=40,
+            help="Number of students to enroll in each class section.",
+        )
+        parser.add_argument(
+            "--reset-enrollments",
+            action="store_true",
+            help="Delete enrollments for seeded classes before reassigning.",
+        )
+
+    def handle(self, *args, **options):
+        year_name = options["year"].strip()
+        grades = [int(g.strip()) for g in options["grades"].split(",") if g.strip()]
+        sections = [s.strip().upper() for s in options["sections"].split(",") if s.strip()]
+        students_per_section = max(1, int(options["students_per_section"]))
+        reset_enrollments = options["reset_enrollments"]
+
+        self.stdout.write(self.style.NOTICE("Seeding academic data..."))
 
         with transaction.atomic():
-            # 1. Create Academic Year
-            academic_year, _ = AcademicYear.objects.get_or_create(
-                year_name="2025/2026",
-                defaults={
-                    'start_date': date(2025, 9, 1),
-                    'end_date': date(2026, 7, 31),
-                    'is_current': True
-                }
-            )
-
-            # 2. Create Subjects
-            subjects_data = [
-                ('Mathematics', 'MATH101', 1),
-                ('English Language', 'ENG101', 1),
-                ('Integrated Science', 'SCI101', 1),
-                ('Social Studies', 'SOC101', 1),
-                ('Information Technology', 'ICT101', 1),
-            ]
-            
-            created_subjects = []
-            for name, code, level in subjects_data:
-                sub, _ = Subject.objects.get_or_create(
-                    subject_code=code,
-                    defaults={'subject_name': name, 'grade_level': level}
+            teacher = Teacher.objects.select_related("user").first()
+            if not teacher:
+                self.stdout.write(
+                    self.style.ERROR("No Teacher found. Seed/create teachers first.")
                 )
-                created_subjects.append(sub)
-
-            # 3. Create Classes
-            # We'll create Grade 1A and Grade 1B
-            staff_member = Staff.objects.first() # Assigns first staff as class teacher for demo
-            
-            classes = []
-            for section in ['A', 'B']:
-                cls, _ = Class.objects.get_or_create(
-                    class_name=f"Grade 1{section}",
-                    academic_year=academic_year,
-                    defaults={
-                        'grade_level': 1,
-                        'section': section,
-                        'class_teacher': staff_member,
-                        'capacity': 30,
-                        'room_number': f"R{100 + ord(section)}"
-                    }
-                )
-                classes.append(cls)
-
-                # 4. Create Subject Assignments (Assign all subjects to these classes)
-                for sub in created_subjects:
-                    SubjectAssignment.objects.get_or_create(
-                        class_obj=cls,
-                        subject=sub,
-                        defaults={'teacher': staff_member}
-                    )
-
-            # 5. Enroll Students
-            all_students = Student.objects.all()
-            if not all_students.exists():
-                self.stdout.write(self.style.WARNING("No students found. Run seed_students first!"))
                 return
 
-            for index, student in enumerate(all_students):
-                # Distribute students: first 10 to Grade 1A, next 10 to Grade 1B
-                target_class = classes[0] if index < 10 else classes[1]
-                
-                Enrollment.objects.get_or_create(
-                    student=student,
-                    class_obj=target_class,
-                    defaults={
-                        'status': 'active',
-                        'roll_number': (index % 10) + 1
-                    }
-                )
+            staff_teacher = Staff.objects.filter(user=teacher.user).first()
 
-        self.stdout.write(self.style.SUCCESS("Successfully seeded Academic structure!"))
+            try:
+                start_year = int(year_name.split("-")[0])
+            except (ValueError, IndexError):
+                self.stdout.write(
+                    self.style.ERROR(
+                        "Invalid --year format. Use format like 2025-2026."
+                    )
+                )
+                return
+
+            academic_year, _ = AcademicYear.objects.get_or_create(
+                year_name=year_name,
+                defaults={
+                    "start_date": date(start_year, 9, 1),
+                    "end_date": date(start_year + 1, 7, 31),
+                    "is_current": True,
+                },
+            )
+            if not academic_year.is_current:
+                academic_year.is_current = True
+                academic_year.save(update_fields=["is_current"])
+            AcademicYear.objects.exclude(id=academic_year.id).update(is_current=False)
+
+            subjects_data = [
+                ("Mathematics", "MATH101"),
+                ("English Language", "ENG101"),
+                ("Integrated Science", "SCI101"),
+                ("Social Studies", "SOC101"),
+                ("Information Technology", "ICT101"),
+                ("Creative Arts", "ART101"),
+                ("Physical Education", "PE101"),
+            ]
+
+            subjects = []
+            for subject_name, subject_code in subjects_data:
+                subject, _ = Subject.objects.get_or_create(
+                    subject_code=subject_code,
+                    defaults={
+                        "subject_name": subject_name,
+                        "grade_level": min(grades) if grades else 1,
+                    },
+                )
+                subjects.append(subject)
+
+            classes = []
+            for grade in grades:
+                for section in sections:
+                    class_name = f"Grade {grade}{section}"
+                    cls, _ = Class.objects.get_or_create(
+                        grade_level=grade,
+                        section=section,
+                        academic_year=year_name,
+                        defaults={
+                            "class_name": class_name,
+                            "class_teacher": teacher,
+                            "capacity": max(50, students_per_section + 5),
+                            "room_number": f"R{grade}{section}",
+                        },
+                    )
+
+                    dirty = False
+                    if cls.class_name != class_name:
+                        cls.class_name = class_name
+                        dirty = True
+                    if cls.class_teacher_id != teacher.id:
+                        cls.class_teacher = teacher
+                        dirty = True
+                    if dirty:
+                        cls.save()
+
+                    classes.append(cls)
+
+                    for subject in subjects:
+                        assignment, created = SubjectAssignment.objects.get_or_create(
+                            class_obj=cls,
+                            subject=subject,
+                            defaults={"teacher": staff_teacher},
+                        )
+                        if (
+                            not created
+                            and staff_teacher
+                            and assignment.teacher_id != staff_teacher.id
+                        ):
+                            assignment.teacher = staff_teacher
+                            assignment.save(update_fields=["teacher"])
+
+            total_needed = len(classes) * students_per_section
+            existing_students = list(Student.objects.order_by("id")[:total_needed])
+            to_create = total_needed - len(existing_students)
+
+            first_names = [
+                "Kwame",
+                "Akosua",
+                "Kofi",
+                "Ama",
+                "Yaw",
+                "Efua",
+                "Kojo",
+                "Abena",
+                "Nana",
+                "Yaa",
+            ]
+            last_names = [
+                "Mensah",
+                "Boateng",
+                "Asante",
+                "Owusu",
+                "Adjei",
+                "Appiah",
+                "Agyeman",
+                "Darko",
+                "Ofori",
+                "Bonsu",
+            ]
+            genders = [choice[0] for choice in Student.Gender.choices]
+
+            seq = Student.objects.count() + 1
+            for _ in range(to_create):
+                while True:
+                    admission_number = f"{start_year}{seq:05d}"
+                    if not Student.objects.filter(admission_number=admission_number).exists():
+                        break
+                    seq += 1
+
+                student = Student.objects.create(
+                    admission_number=admission_number,
+                    first_name=random.choice(first_names),
+                    last_name=random.choice(last_names),
+                    date_of_birth=date(
+                        start_year - 9,
+                        random.randint(1, 12),
+                        random.randint(1, 28),
+                    ),
+                    gender=random.choice(genders),
+                    status=Student.Status.ACTIVE,
+                    admission_date=date(start_year, 9, 1),
+                    created_by=teacher.user,
+                )
+                existing_students.append(student)
+                seq += 1
+
+            students = existing_students[:total_needed]
+
+            if reset_enrollments:
+                Enrollment.objects.filter(class_obj__in=classes).delete()
+
+            for class_index, cls in enumerate(classes):
+                start = class_index * students_per_section
+                stop = start + students_per_section
+                section_students = students[start:stop]
+
+                for roll_number, student in enumerate(section_students, start=1):
+                    Enrollment.objects.update_or_create(
+                        student=student,
+                        class_obj=cls,
+                        defaults={
+                            "status": Enrollment.EnrollmentStatus.ACTIVE,
+                            "roll_number": roll_number,
+                        },
+                    )
+                    if student.class_obj_id != cls.id:
+                        student.class_obj = cls
+                        student.save(update_fields=["class_obj"])
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Seed complete: {len(classes)} classes, {len(subjects)} subjects, "
+                f"{total_needed} enrolled students for {year_name}."
+            )
+        )

@@ -1,16 +1,28 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import GenericAPIView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from django.http import JsonResponse
+from django.db import connection
+from django.template.loader import render_to_string
+from django.utils import timezone
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import authenticate
 from django.db.models import Q
+import os
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
-from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiParameter
+from django.core.mail import EmailMessage
+from django.core.mail.backends.smtp import EmailBackend as SMTPBackend
+from django.core.mail.backends.console import EmailBackend as ConsoleBackend
+from apps.settings.models import EmailConfiguration
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 from .models import User
 from .serializers import (
     UserSerializer,
@@ -20,7 +32,7 @@ from .serializers import (
 )
 from .permissions import IsAdminOrHeadmaster
 import logging
-
+from django.core.mail import send_mail, get_connection
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +67,7 @@ class LoginView(TokenObtainPairView):
         try:
             return super().post(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error during login: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -253,23 +265,19 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
     
-    # Disable unused actions
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
     
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by role if specified
         role = self.request.query_params.get('role', None)
         if role:
             queryset = queryset.filter(role=role)
         
-        # Filter by active status
         is_active = self.request.query_params.get('is_active', None)
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
         
-        # Search by username, email, first_name, or last_name
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -287,7 +295,6 @@ class UserViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
-            # Set password and created_by
             user = serializer.save()
             user.set_password(request.data.get('password'))
             user.created_by = request.user
@@ -298,7 +305,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error creating user: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -337,13 +344,33 @@ class UserViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+        
+
+    def get_email_connection(self):
+        """Build an email connection from the DB email config model."""
+        config = EmailConfiguration.objects.first()
+        if not config:
+            raise ValueError("No email configuration found. Please set up email settings in the admin panel.")
+
+        if config.backend == "console":
+            return ConsoleBackend()
+
+        return SMTPBackend(
+            host=config.host,
+            port=config.port,
+            username=config.host_user,
+            password=config.host_password,
+            use_tls=config.use_tls,
+            fail_silently=False,
+        )
+
+
     def update(self, request, *args, **kwargs):
         """Update user with exception handling"""
         try:
             return super().update(request, *args, **kwargs)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error updating user: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -399,7 +426,6 @@ class UserViewSet(viewsets.ModelViewSet):
             
             serializer = ChangePasswordSerializer(data=request.data)
             if serializer.is_valid():
-                # Admin can change any password without knowing old password
                 new_password = serializer.validated_data['new_password']
                 user.set_password(new_password)
                 user.save()
@@ -410,7 +436,7 @@ class UserViewSet(viewsets.ModelViewSet):
             
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error changing password for user {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -449,7 +475,6 @@ class UserViewSet(viewsets.ModelViewSet):
         try:
             user = self.get_object()
             
-            # Cannot deactivate yourself
             if user == request.user:
                 error_detail = 'You cannot deactivate your own account'
                 return Response(
@@ -465,7 +490,7 @@ class UserViewSet(viewsets.ModelViewSet):
             
             return Response({'message': 'User deactivated successfully'})
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error deactivating user {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -508,7 +533,7 @@ class UserViewSet(viewsets.ModelViewSet):
             
             return Response({'message': 'User activated successfully'})
             
-        except ValidationError as e:
+        except (DRFValidationError, ValidationError) as e:
             logger.error(f"Validation error activating user {pk}: {str(e)}")
             
             if hasattr(e, 'message_dict'):
@@ -536,20 +561,69 @@ class UserViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    @extend_schema(
+    responses={200: OpenApiResponse(description="Invite email sent successfully")},
+    description="Send platform invite email to a user"
+    )
+        
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrHeadmaster])
+    def send_invite(self, request, pk=None):
+        try:
+            user = self.get_object()
+            config = EmailConfiguration.objects.first()
+            if not config:
+                return Response(
+                    {'error': 'Email not configured. Please set up email settings first.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
+            frontend_url = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+            login_url    = f"{frontend_url}/login"
+            school_name  = config.school_name or "School Administration"
+            from_email   = config.default_from_email or config.host_user
 
-# Health check
-from django.http import JsonResponse
-from django.db import connection
-from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_exempt
+            html_body = render_to_string('emails/platform_invite.html', {
+                'username':    user.username,
+                'email':       user.email,
+                'role_display': user.role,
+                'school_name': school_name,
+                'platform_url': frontend_url,
+                'login_url':   login_url,
+                'invited_by':  request.user.username,
+                'invited_on':  timezone.now().strftime('%d %B %Y'),
+            })
+
+            connection = self.get_email_connection()
+
+            email = EmailMessage(
+                subject=f"You've been invited to {school_name}'s Management Platform",
+                body=html_body,
+                from_email=from_email,
+                to=[user.email],
+                connection=connection,
+            )
+            email.content_subtype = 'html' 
+            email.send()
+
+            logger.info(f"Invite sent to {user.email} by {request.user.username}")
+            return Response({'message': f'Invite sent successfully to {user.email}'})
+
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            logger.error(f"Failed to send invite to user {pk}: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Failed to send invite: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 @csrf_exempt
 @require_http_methods(["GET"])
 def health_check(request):
     """Health check endpoint for monitoring"""
     try:
-        # Check database connection
         connection.ensure_connection()
         
         return JsonResponse({

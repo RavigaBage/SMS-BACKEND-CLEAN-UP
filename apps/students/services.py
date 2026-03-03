@@ -5,7 +5,7 @@ from apps.grades.models import Grade
 from apps.attendance.models import Attendance
 from apps.academic.models import Class, Enrollment
 from datetime import datetime
-
+from django.db.models import Q
 
 class StudentService:
     """Service layer for Student operations"""
@@ -24,11 +24,10 @@ class StudentService:
         Returns:
             dict with student, parents, and enrollment
         """
-        # Validate admission number uniqueness
+
         if Student.objects.filter(admission_number=student_data['admission_number']).exists():
             raise ValidationError(f"Admission number {student_data['admission_number']} already exists")
-        
-        # Create Student
+       
         student = Student.objects.create(
             admission_number=student_data['admission_number'],
             first_name=student_data['first_name'],
@@ -47,12 +46,10 @@ class StudentService:
             created_by=created_by
         )
         
-        # Create/Link Parents
         parents = []
         if parent_data_list:
             parents = self._process_parents(student, parent_data_list)
         
-        # Enroll in class if provided
         enrollment = None
         if class_id:
             enrollment = self._enroll_student(student, class_id)
@@ -68,7 +65,7 @@ class StudentService:
         parents = []
         
         for parent_data in parent_data_list:
-            # Check if parent already exists (by phone number or national_id)
+          
             parent = None
             
             if parent_data.get('national_id'):
@@ -77,7 +74,6 @@ class StudentService:
             if not parent and parent_data.get('phone_number'):
                 parent = Parent.objects.filter(phone_number=parent_data['phone_number']).first()
             
-            # Create parent if doesn't exist
             if not parent:
                 parent = Parent.objects.create(
                     first_name=parent_data['first_name'],
@@ -91,7 +87,6 @@ class StudentService:
                     relationship=parent_data['relationship']
                 )
             
-            # Link parent to student
             StudentParent.objects.create(
                 student=student,
                 parent=parent,
@@ -110,15 +105,12 @@ class StudentService:
         except Class.DoesNotExist:
             raise ValidationError("Class not found")
         
-        # Check if already enrolled
         if Enrollment.objects.filter(student=student, class_obj=class_obj).exists():
             raise ValidationError(f"Student already enrolled in {class_obj.class_name}")
         
-        # Check class capacity
         if class_obj.current_enrollment >= class_obj.capacity:
             raise ValidationError(f"Class {class_obj.class_name} is at full capacity")
         
-        # Get next roll number
         last_enrollment = Enrollment.objects.filter(class_obj=class_obj).order_by('-roll_number').first()
         next_roll_number = (last_enrollment.roll_number + 1) if last_enrollment and last_enrollment.roll_number else 1
         
@@ -139,12 +131,10 @@ class StudentService:
         except Student.DoesNotExist:
             raise ValidationError("Student not found")
         
-        # Check admission number uniqueness if being changed
         if 'admission_number' in student_data and student_data['admission_number'] != student.admission_number:
             if Student.objects.filter(admission_number=student_data['admission_number']).exists():
                 raise ValidationError(f"Admission number {student_data['admission_number']} already exists")
         
-        # Update fields
         for field, value in student_data.items():
             if hasattr(student, field):
                 setattr(student, field, value)
@@ -171,7 +161,6 @@ class StudentService:
         except Student.DoesNotExist:
             raise ValidationError("Student not found")
         
-        # Mark current enrollment as completed
         current_enrollment = Enrollment.objects.filter(
             student=student,
             status=Enrollment.EnrollmentStatus.ACTIVE
@@ -181,19 +170,16 @@ class StudentService:
             current_enrollment.status = Enrollment.EnrollmentStatus.COMPLETED
             current_enrollment.save()
         
-        # Create new enrollment
         new_enrollment = self._enroll_student(student, new_class_id)
         
         return new_enrollment
     
     @staticmethod
-    # apps/students/services.py
     def get_student_with_details(student_id):
-        # The error is happening right here in this prefetch_related call
         return {
             'student': Student.objects.prefetch_related(
                 'parent_links__parent',
-                'academic_grades',  # <--- CHANGE THIS from 'grades'
+                'academic_grades', 
                 'enrollments',
                 'attendance_records' 
             ).get(id=student_id),
@@ -213,15 +199,14 @@ class StudentService:
     def search_students(query):
         """Search students by name or admission number"""
         return Student.objects.filter(
-            models.Q(first_name__icontains=query) |
-            models.Q(last_name__icontains=query) |
-            models.Q(admission_number__icontains=query)
+            Q(first_name__icontains=query) |
+            Q(last_name__icontains=query) |
+            Q(admission_number__icontains=query)
         )
     
     def delete_student(self, student_id):
         try:
             student = Student.objects.get(id=student_id)
-            # You can add custom logic here, like archiving instead of deleting
             student.delete()
             return True
         except Student.DoesNotExist:
@@ -239,7 +224,6 @@ class ParentService:
         except Parent.DoesNotExist:
             raise ValidationError("Parent not found")
         
-        # Update fields
         for field, value in parent_data.items():
             if hasattr(parent, field):
                 setattr(parent, field, value)

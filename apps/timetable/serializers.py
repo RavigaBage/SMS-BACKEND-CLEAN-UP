@@ -53,12 +53,10 @@ class TimetableSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"] 
 
 class SyllabusSerializer(serializers.ModelSerializer):
-    # Read-only nested serializers (for GET requests)
     subject = serializers.SerializerMethodField(read_only=True)
     teacher = serializers.SerializerMethodField(read_only=True)
     class_obj = serializers.SerializerMethodField(read_only=True)
     
-    # Write-only fields (for POST/PUT/PATCH requests)
     subject_id = serializers.PrimaryKeyRelatedField(
         queryset=Subject.objects.all(),
         source='subject',
@@ -97,16 +95,13 @@ class SyllabusSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id']
 
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAuthenticated(), IsTeacher()]  # ← only teachers can write
-        return [IsAuthenticated()]
-
     def to_internal_value(self, data):
         data = data.copy()
         request = self.context.get('request')
+        
         if request and hasattr(request.user, 'role') and request.user.role == User.Role.TEACHER:
-            data.pop('teacher_id', None)
+            data['teacher_id'] = request.user.teacher_profile.id
+        
         return super().to_internal_value(data)
 
     def get_subject(self, obj):
@@ -142,13 +137,21 @@ class SyllabusSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        subject     = data.get('subject')
-        teacher     = data.get('teacher')    # may be None for teacher role — that's fine
-        class_obj   = data.get('class_obj')
+        subject = data.get('subject')
+        teacher = data.get('teacher')    
+        class_obj = data.get('class_obj')
         week_number = data.get('week_number')
 
-        # Skip uniqueness check if teacher isn't in the payload yet
-        # (it gets injected by the mixin in perform_create after validation)
+        if teacher and subject:
+            from apps.teachers.models import Teacher
+            teacher_instance = Teacher.objects.prefetch_related('subjects').get(id=teacher.id)
+            is_assigned = teacher_instance.subjects.filter(id=subject.id).exists()
+            
+            if not is_assigned:
+                raise serializers.ValidationError({
+                    'subject_id': f"You are not assigned to teach '{subject.subject_name}'. You can only create syllabi for subjects you teach."
+                })
+
         if not teacher:
             return data
 
@@ -169,7 +172,7 @@ class SyllabusSerializer(serializers.ModelSerializer):
         return data
 
 
-# Minimal serializer for nested use
+
 class SyllabusMinimalSerializer(serializers.ModelSerializer):
     """Lightweight serializer for nested representations"""
     
@@ -183,7 +186,6 @@ class SyllabusMinimalSerializer(serializers.ModelSerializer):
         ]
 
 
-# List serializer for displaying multiple syllabi
 class SyllabusListSerializer(serializers.ModelSerializer):
     """Serializer optimized for list views"""
     subject_name = serializers.CharField(source='subject.subject_name', read_only=True)

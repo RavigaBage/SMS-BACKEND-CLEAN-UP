@@ -5,9 +5,7 @@ from apps.teachers.models import Teacher
 
 
 class AcademicYear(models.Model):
-    """Academic year configuration"""
-
-
+  
     year_name = models.CharField(max_length=20, unique=True, help_text="e.g., '2024/2025'")
     start_date = models.DateField()
     end_date = models.DateField()
@@ -25,14 +23,13 @@ class AcademicYear(models.Model):
         return f"{self.year_name} {'(Current)' if self.is_current else ''}"
     
     def save(self, *args, **kwargs):
-        # Ensure only one academic year is marked as current
         if self.is_current:
             AcademicYear.objects.filter(is_current=True).update(is_current=False)
         super().save(*args, **kwargs)
 
 
 class Class(models.Model):
-    """Class/Grade configuration"""
+   
     
     class_name = models.CharField(max_length=50, help_text="e.g., 'Grade 5A'")
     grade_level = models.IntegerField(help_text="1-12 or your grading system")
@@ -47,6 +44,7 @@ class Class(models.Model):
     )
     capacity = models.IntegerField(default=40)
     room_number = models.CharField(max_length=20, blank=True)
+    subjects = models.ManyToManyField('Subject', related_name='classes', blank=True)
     
     class Meta:
         db_table = 'classes'
@@ -102,10 +100,16 @@ class Enrollment(models.Model):
     enrollment_date = models.DateField(auto_now_add=True)
     status = models.CharField(max_length=20, choices=EnrollmentStatus.choices, default=EnrollmentStatus.ACTIVE)
     roll_number = models.IntegerField(null=True, blank=True, help_text="Position in class")
+    academic_year = models.CharField(
+        max_length=20,
+        blank=True,            
+        help_text="e.g. '2024-2025'",
+        db_index=True,           
+    )
     
     class Meta:
         db_table = 'enrollments'
-        unique_together = ['student', 'class_obj']
+        unique_together = ['student', 'class_obj', 'academic_year']
         ordering = ['roll_number']
         indexes = [
             models.Index(fields=['student']),
@@ -116,10 +120,16 @@ class Enrollment(models.Model):
     def __str__(self):
         return f"{self.student.full_name} in {self.class_obj.class_name}"
 
+    def save(self, *args, **kwargs):
+        # Safety net for all creation paths (serializer, services, commands):
+        # if academic_year is omitted, inherit it from the selected class.
+        if not self.academic_year and self.class_obj_id:
+            self.academic_year = self.class_obj.academic_year
+        super().save(*args, **kwargs)
+
 
 class SubjectAssignment(models.Model):
-    """Which teacher teaches which subject to which class"""
-
+   
     class_obj = models.ForeignKey(Class, on_delete=models.CASCADE, related_name='subject_assignments')
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='class_assignments')
     teacher = models.ForeignKey(

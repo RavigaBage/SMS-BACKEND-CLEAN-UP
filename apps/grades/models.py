@@ -74,15 +74,20 @@ class Grade(models.Model):
         return f"{self.student} | {self.subject} | {self.total_score}%"
 
     def save(self, *args, **kwargs):
-        # Automatically calculate total_score before saving
         self.total_score = self.weighted_assessment + self.weighted_test + self.weighted_exam
         self.grade_letter = self.calculate_letter_grade(self.total_score)
         super().save(*args, **kwargs)
 
     def calculate_letter_grade(self, score):
         if score >= 90: return 'A+'
-        elif score >= 80: return 'A'
+        elif score >= 85: return 'A'
+        elif score >= 80: return 'A-'
+        elif score >= 75: return 'B+'
         elif score >= 70: return 'B'
-        elif score >= 60: return 'C'
-        elif score >= 50: return 'D'
+        elif score >= 65: return 'B-'
+        elif score >= 60: return 'C+'
+        elif score >= 55: return 'C'
+        elif score >= 50: return 'C-'
+        elif score >= 45: return 'D+'
+        elif score >= 40: return 'D'
         return 'F'

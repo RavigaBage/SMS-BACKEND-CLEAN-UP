@@ -79,11 +79,9 @@ class CanManageGrades(permissions.BasePermission):
         if not (request.user and request.user.is_authenticated):
             return False
         
-        # Admin and headmaster have full access
         if request.user.role in [User.Role.ADMIN, User.Role.HEADMASTER]:
             return True
         
-        # Teachers can manage grades
         if request.user.role == User.Role.TEACHER:
             return True
         

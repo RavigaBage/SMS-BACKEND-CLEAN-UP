@@ -21,7 +21,6 @@ class UserService:
         """Generate username from name and role"""
         base_username = f"{first_name.lower()}.{last_name.lower()}"
         
-        # If username exists, append number
         counter = 1
         username = base_username
         while User.objects.filter(username=username).exists():
@@ -40,13 +39,11 @@ class UserService:
     def validate_role_permissions(created_by_user, target_role):
         """Check if user has permission to create this role"""
         if not created_by_user:
-            return True  # Superuser creation
+            return True 
         
-        # Only admin and headmaster can create users
         if created_by_user.role not in [User.Role.ADMIN, User.Role.HEADMASTER]:
             raise ValidationError("You don't have permission to create users")
         
-        # Bursar cannot create admin or headmaster
         if created_by_user.role == User.Role.BURSAR:
             if target_role in [User.Role.ADMIN, User.Role.HEADMASTER]:
                 raise ValidationError("You don't have permission to create this role")

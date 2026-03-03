@@ -7,8 +7,6 @@ from datetime import timedelta
 from apps.accounts.models import User
 
 
-# ─── Student ──────────────────────────────────────────────────────────────────
-
 class Student(models.Model):
     """
     Student records - NO user account required.
@@ -97,8 +95,6 @@ class Student(models.Model):
         return None
 
 
-# ─── Parent ───────────────────────────────────────────────────────────────────
-
 class Parent(models.Model):
     """
     Parent/Guardian records.
@@ -112,8 +108,6 @@ class Parent(models.Model):
         GUARDIAN = 'guardian', 'Guardian'
         OTHER    = 'other',    'Other'
 
-    # ── Optional User account link ────────────────────────────────────────────
-    # Null means no app access yet. Admin sets this when granting access.
     user = models.OneToOneField(
         User,
         on_delete=models.SET_NULL,
@@ -169,8 +163,6 @@ class Parent(models.Model):
         return Student.objects.filter(parent_links__parent=self)
 
 
-# ─── StudentParent ────────────────────────────────────────────────────────────
-
 class StudentParent(models.Model):
     """Many-to-Many bridge between students and parents."""
 
@@ -190,8 +182,6 @@ class StudentParent(models.Model):
     def __str__(self):
         return f"{self.student.full_name} ← {self.parent.full_name}"
 
-
-# ─── ParentInvite ─────────────────────────────────────────────────────────────
 
 def _generate_code():
     """Generate a random 8-character uppercase invite code"""
@@ -244,8 +234,6 @@ class ParentInvite(models.Model):
         self.used_at = timezone.now()
         self.save(update_fields=['used', 'used_at'])
 
-
-# ─── StudentAttendance ────────────────────────────────────────────────────────
 
 class StudentAttendance(models.Model):
     """Daily attendance tracking for Student"""

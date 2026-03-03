@@ -33,32 +33,26 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Replace username field with email
         self.fields['email'] = serializers.EmailField(required=True)
         self.fields.pop('username', None)
     
     def validate(self, attrs):
-        # Get email and password from request
         email = attrs.get('email')
         password = attrs.get('password')
         
-        # Find user by email
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             raise serializers.ValidationError('Invalid email or password')
         
-        # Check if user is active
         if not user.is_active:
             raise serializers.ValidationError('Account is deactivated')
         
-        # Authenticate using username (Django's authenticate requires username)
         user = authenticate(username=user.username, password=password)
         
         if user is None:
             raise serializers.ValidationError('Invalid email or password')
         
-        # Get tokens
         refresh = self.get_token(user)
         
         data = {
