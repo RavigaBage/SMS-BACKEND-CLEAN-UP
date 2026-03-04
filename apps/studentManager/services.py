@@ -10,10 +10,13 @@ class ProgressionService:
             return
 
         try:
+
             progression = StudentProgression.objects.get(
                 student=enrollment.student,
                 academic_year=enrollment.academic_year
             )
+
+            
             if progression.status in final_statuses and progression.enrollment_applied:
                 progression.status = 'pending'
                 progression.to_class = enrollment.class_obj.class_name

@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.db import models, transaction
-
+from django.core.exceptions import ValidationError
+from apps.students.models import Student
 from apps.academic.models import Class, Enrollment
 
 User = get_user_model()
@@ -66,6 +67,7 @@ class StudentProgression(models.Model):
             raise ValueError(
                 'Enrollment transition has already been applied for this progression record.'
             )
+        
 
         with transaction.atomic():
             Enrollment.objects.filter(
@@ -89,12 +91,21 @@ class StudentProgression(models.Model):
                         'Make sure to_class/from_class matches an existing Class record.'
                     )
 
+                if new_class.current_enrollment >= new_class.capacity:
+                    raise ValueError(f"Class {new_class.class_name} is at full capacity")
+
                 Enrollment.objects.create(
                     student=self.student,
                     class_obj=new_class,
                     academic_year=self.academic_year,
                     status=Enrollment.EnrollmentStatus.ACTIVE,
                 )
+                self.student.class_obj = new_class
+                self.student.save(update_fields=['class_obj'])
+
+            else:
+                self.student.class_obj = None
+                self.student.save(update_fields=['class_obj'])
 
             self.enrollment_applied = True
             self.save(update_fields=['enrollment_applied'])

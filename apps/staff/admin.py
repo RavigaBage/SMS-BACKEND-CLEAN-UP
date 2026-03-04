@@ -4,7 +4,6 @@ from django.utils import timezone
 
 @admin.register(StaffAttendance)
 class StaffAttendanceAdmin(admin.ModelAdmin):
-    # 1. Columns to display in the list view
     list_display = (
         'staff_full_name', 
         'attendance_date', 

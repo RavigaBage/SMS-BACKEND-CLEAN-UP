@@ -12,8 +12,11 @@ from .serializers import (
     StudentProgressionUpdateSerializer,
     BulkPromoteSerializer,
 )
+from .permissions import CanManageProgression
+from rest_framework.permissions import IsAuthenticated
 
 class StudentProgressionListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated, CanManageProgression]
     serializer_class = StudentProgressionSerializer
     permission_classes = [IsAdminUser]
 
@@ -118,7 +121,9 @@ class StudentProgressionListView(generics.ListAPIView):
                     progression.from_class = from_class
                     progression.updated_by = self.request.user
                     progression.save(update_fields=['from_class', 'updated_by'])
+
 class StudentProgressionCreateView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated, CanManageProgression]
     """
     POST /api/progressions/create/
     Body: { student, academic_year, from_class, to_class, status, remarks }
@@ -126,11 +131,12 @@ class StudentProgressionCreateView(generics.CreateAPIView):
     serializer_class   = StudentProgressionSerializer
     permission_classes = [IsAdminUser]
 
-    def perform_create(self, serializer):
+    def perform_create(self, serializer):       
         serializer.save(updated_by=self.request.user)
 
 
 class StudentProgressionDetailView(generics.RetrieveUpdateAPIView):
+    permission_classes = [IsAuthenticated, CanManageProgression]
     """
     GET    /api/progressions/<id>/
     PATCH  /api/progressions/<id>/   ← update status / to_class / remarks

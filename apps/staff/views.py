@@ -296,6 +296,7 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
                 {'error': 'Validation Error', 'detail': 'payment_period is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
 
         active_staff = Staff.objects.filter(is_active=True)
         if not active_staff.exists():

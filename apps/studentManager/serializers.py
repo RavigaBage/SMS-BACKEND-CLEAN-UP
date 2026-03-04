@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from .models import StudentProgression
 
-
 class StudentProgressionSerializer(serializers.ModelSerializer):
     """Full serializer — used for retrieve / update."""
 

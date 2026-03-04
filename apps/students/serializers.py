@@ -156,7 +156,7 @@ class StudentCreateSerializer(serializers.Serializer):
 
     admission_date = serializers.DateField()
     photo_url = serializers.URLField(required=False, allow_blank=True)
-
+    class_obj = serializers.IntegerField(required=False, allow_null=True)
     class_id = serializers.IntegerField(required=False, allow_null=True)
     parents = serializers.ListField(
         child=serializers.DictField(),

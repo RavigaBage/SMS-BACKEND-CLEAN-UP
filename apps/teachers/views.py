@@ -15,7 +15,7 @@ from .serializers import (
     TeacherAssignSubjectsSerializer
 )
 from .services import TeacherService
-from apps.accounts.permissions import IsAdminOrHeadmaster
+from apps.accounts.permissions import IsAdminOrHeadmaster,IsAdminHeadmasterOrTeacher
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,12 @@ class TeacherViewSet(viewsets.ModelViewSet):
     
     queryset = Teacher.objects.select_related('user', 'assigned_by').prefetch_related('subjects').all()
     permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsAdminOrHeadmaster()]
+
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -38,19 +44,28 @@ class TeacherViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
+        user = self.request.user
+
+        if hasattr(user, 'role') and user.role == 'teacher':
+            queryset = queryset.filter(user=user)
+            return queryset
+
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
-        
+
         specialization = self.request.query_params.get('specialization')
         if specialization:
             queryset = queryset.filter(specialization__icontains=specialization)
-        
+
         subject_id = self.request.query_params.get('subject_id')
         if subject_id:
             queryset = queryset.filter(subjects__id=subject_id)
-        
+
+        user_id = self.request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(user__id=user_id)
+
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -58,9 +73,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 Q(last_name__icontains=search) |
                 Q(user__username__icontains=search)
             )
-        
+
         return queryset
-    
+
     def create(self, request, *args, **kwargs):
         """Create a teacher profile"""
         serializer = self.get_serializer(data=request.data)

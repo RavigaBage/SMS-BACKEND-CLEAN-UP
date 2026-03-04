@@ -27,7 +27,9 @@ class StudentService:
 
         if Student.objects.filter(admission_number=student_data['admission_number']).exists():
             raise ValidationError(f"Admission number {student_data['admission_number']} already exists")
-       
+        created_class=None
+        if class_id:
+            created_class = Class.objects.get(id=class_id)
         student = Student.objects.create(
             admission_number=student_data['admission_number'],
             first_name=student_data['first_name'],
@@ -43,7 +45,8 @@ class StudentService:
             status=student_data.get('status', Student.Status.ACTIVE),
             admission_date=student_data.get('admission_date', datetime.now().date()),
             photo_url=student_data.get('photo_url', ''),
-            created_by=created_by
+            created_by=created_by,
+            class_obj=created_class
         )
         
         parents = []
@@ -51,6 +54,7 @@ class StudentService:
             parents = self._process_parents(student, parent_data_list)
         
         enrollment = None
+        
         if class_id:
             enrollment = self._enroll_student(student, class_id)
         
@@ -120,6 +124,7 @@ class StudentService:
             roll_number=next_roll_number,
             status=Enrollment.EnrollmentStatus.ACTIVE
         )
+        
         
         return enrollment
     

@@ -88,7 +88,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             
             parent_data_list = serializer.validated_data.get('parents', [])
             
-            class_id = serializer.validated_data.get('class_id')
+            class_id = serializer.validated_data.get('class_obj')
             
             service = StudentService()
             result = service.register_student(

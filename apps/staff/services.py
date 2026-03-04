@@ -4,6 +4,7 @@ from apps.accounts.models import User
 from apps.accounts.services import UserService
 from .models import Staff, SalaryStructure, SalaryPayment
 from datetime import datetime
+from decimal import Decimal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -268,8 +269,11 @@ class SalaryService:
         
         try:
           
-            if SalaryPayment.objects.filter(staff=staff, payment_period=payment_period).exists():
-                raise ValidationError(f"Salary already processed for {payment_period}")
+            existing = SalaryPayment.objects.filter(staff=staff, payment_period=payment_period).first()
+            if existing:
+                if existing.status == SalaryPayment.PaymentStatus.PAID:
+                    raise ValidationError(f"Salary already paid for {payment_period}")
+                return existing
             
             salary_structure = SalaryStructure.objects.filter(
                 staff=staff,
@@ -288,7 +292,7 @@ class SalaryService:
             )
             
             gross_salary = base_salary + allowances
-            tax = gross_salary * 0.10
+            tax = tax = gross_salary * Decimal('0.10')
             
             net_salary = gross_salary - tax
             

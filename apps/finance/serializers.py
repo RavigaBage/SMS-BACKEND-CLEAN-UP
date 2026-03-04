@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import FeeStructure, Invoice, InvoiceItem, Payment, Expenditure
 from apps.students.serializers import StudentSerializer
 from apps.academic.serializers import ClassSerializer
+from apps.staff.models import Staff
 from django.apps import apps
 
 Class = apps.get_model('academic', 'Class')
@@ -101,30 +102,43 @@ class PaymentCreateSerializer(serializers.Serializer):
     transaction_reference = serializers.CharField(max_length=100, required=False, allow_blank=True)
     remarks               = serializers.CharField(required=False, allow_blank=True)
 
-
 class ExpenditureSerializer(serializers.ModelSerializer):
-    category_display       = serializers.CharField(source='get_category_display',       read_only=True)
+    category_display       = serializers.CharField(source='get_category_display', read_only=True)
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
-    approved_by_username   = serializers.CharField(
-        source='approved_by.username',      read_only=True, allow_null=True
+    approved_by_username   = serializers.CharField(source='approved_by.username', read_only=True, allow_null=True)
+    processed_by_username  = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+    
+    staff_name = serializers.SerializerMethodField()
+    
+    date = serializers.DateField(source='transaction_date', read_only=True)
+    
+    transaction_date = serializers.DateField(required=False, allow_null=True)
+    
+    processed_by = serializers.PrimaryKeyRelatedField(
+        queryset=Staff.objects.all(),
+        required=False,
+        allow_null=True
     )
-    processed_by_username  = serializers.CharField(
-        source='processed_by.username',     read_only=True, allow_null=True
-    )
-    staff_name = serializers.CharField(source='processed_by.get_full_name', read_only=True)
-    date       = serializers.DateField(source='transaction_date', read_only=True)
+
+    def get_staff_name(self, obj):
+        if not obj.processed_by:
+            return ""
+        full_name = obj.processed_by.full_name.strip()
+        return full_name if full_name else f"Staff #{obj.processed_by.id}"
+    
 
     class Meta:
         model  = Expenditure
         fields = [
             'id', 'expenditure_number', 'item_name',
             'category', 'category_display',
-            'amount', 'vendor_name', 'date', 'staff_name',
+            'amount', 'vendor_name',
+            'date', 'transaction_date',
+            'staff_name', 'processed_by',
             'description', 'receipt_url', 'created_at',
             'approved_by_username', 'processed_by_username',
             'payment_method_display',
         ]
-
 
 class FinancialSummarySerializer(serializers.Serializer):
     total_revenue     = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)

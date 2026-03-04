@@ -109,6 +109,7 @@ class Timetable(models.Model):
                 raise ValidationError(
                     {"teacher": "This teacher is already scheduled at this time in the selected term/year."}
                 )
+
 class Syllabus(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name="syllabi")
     teacher = models.ForeignKey(Teacher, on_delete=models.CASCADE, related_name="syllabi")

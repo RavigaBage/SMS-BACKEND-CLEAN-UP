@@ -12,7 +12,13 @@ class IsAdminOrHeadmaster(permissions.BasePermission):
             request.user.role in [User.Role.ADMIN, User.Role.HEADMASTER]
         )
 
-
+class IsAdminHeadmasterOrTeacher(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated and
+            request.user.role in ('admin', 'headmaster', 'teacher')
+        )
+    
 class IsBursar(permissions.BasePermission):
     """Permission for bursar only"""
     

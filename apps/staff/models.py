@@ -55,7 +55,7 @@ class Staff(models.Model):
         help_text="Blood group, allergies, medical conditions"
     )
     photo_url = models.URLField(blank=True, max_length=255)
-    
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
