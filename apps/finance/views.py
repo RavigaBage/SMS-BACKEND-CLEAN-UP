@@ -15,6 +15,7 @@ from .serializers import (
     PaymentSerializer, PaymentCreateSerializer, ExpenditureSerializer,
     FinancialSummarySerializer
 )
+from apps.staff.models import Staff
 from .services import InvoiceService, PaymentService
 from apps.accounts.permissions import CanManageFinance
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -583,9 +584,19 @@ class ExpenditureViewSet(viewsets.ModelViewSet):
     
         expenditure_number = f"EXP-{date_code}-{new_number:04d}"
 
+        try:
+            staff = Staff.objects.get(user=self.request.user)
+        except Staff.DoesNotExist:
+            staff = None
+
         serializer.save(
             expenditure_number=expenditure_number,
-            processed_by=self.request.user
+            processed_by=staff         
+        )
+
+        serializer.save(
+            expenditure_number=expenditure_number,
+            processed_by=staff
         )
 
     @action(detail=False, methods=['get'])
