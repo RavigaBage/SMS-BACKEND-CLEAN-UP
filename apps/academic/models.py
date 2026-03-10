@@ -92,7 +92,10 @@ class Enrollment(models.Model):
     class EnrollmentStatus(models.TextChoices):
         ACTIVE = 'active', 'Active'
         COMPLETED = 'completed', 'Completed'
-        WITHDRAWN = 'withdrawn', 'Withdrawn'
+        WITHDRAWN = 'withdrawn', 'Withdrawn',
+        INACTIVE = 'inactive', 'Inactive',
+        GRADUATED = 'graduated', 'Graduated',
+        SUSPENDED = 'suspended', 'Suspended'
     
 
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='enrollments')
@@ -121,8 +124,6 @@ class Enrollment(models.Model):
         return f"{self.student.full_name} in {self.class_obj.class_name}"
 
     def save(self, *args, **kwargs):
-        # Safety net for all creation paths (serializer, services, commands):
-        # if academic_year is omitted, inherit it from the selected class.
         if not self.academic_year and self.class_obj_id:
             self.academic_year = self.class_obj.academic_year
         super().save(*args, **kwargs)

@@ -122,6 +122,7 @@ class StudentProgressionListView(generics.ListAPIView):
                     progression.updated_by = self.request.user
                     progression.save(update_fields=['from_class', 'updated_by'])
 
+
 class StudentProgressionCreateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated, CanManageProgression]
     """

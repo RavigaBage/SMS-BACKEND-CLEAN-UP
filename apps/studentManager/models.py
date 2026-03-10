@@ -42,7 +42,7 @@ class StudentProgression(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('student', 'academic_year')
+        unique_together = ('student', 'academic_year','from_class')
         ordering = ['-academic_year']
 
     def __str__(self):
@@ -53,10 +53,10 @@ class StudentProgression(models.Model):
         Apply final progression status to enrollment records.
 
         Behaviour:
-          promoted  -> close current active enrollment, open in to_class
-          demoted   -> close current active enrollment, open in to_class
-          withheld  -> close current active enrollment, re-open in from_class
-          graduated -> close current active enrollment, no new enrollment
+        promoted  -> close current active enrollment, open in to_class
+        demoted   -> close current active enrollment, open in to_class
+        withheld  -> close current active enrollment, re-open in from_class
+        graduated -> close current active enrollment, no new enrollment
         """
         if self.status not in FINAL_STATUSES:
             raise ValueError(
@@ -67,7 +67,6 @@ class StudentProgression(models.Model):
             raise ValueError(
                 'Enrollment transition has already been applied for this progression record.'
             )
-        
 
         with transaction.atomic():
             Enrollment.objects.filter(
@@ -92,14 +91,17 @@ class StudentProgression(models.Model):
                     )
 
                 if new_class.current_enrollment >= new_class.capacity:
-                    raise ValueError(f"Class {new_class.class_name} is at full capacity")
+                    raise ValueError(f"Class '{new_class.class_name}' is at full capacity.")
 
-                Enrollment.objects.create(
+                enrollment, created = Enrollment.objects.update_or_create(
                     student=self.student,
                     class_obj=new_class,
-                    academic_year=self.academic_year,
-                    status=Enrollment.EnrollmentStatus.ACTIVE,
+                    defaults={
+                        'academic_year': self.academic_year,
+                        'status': Enrollment.EnrollmentStatus.ACTIVE,
+                    },
                 )
+
                 self.student.class_obj = new_class
                 self.student.save(update_fields=['class_obj'])
 
@@ -109,3 +111,17 @@ class StudentProgression(models.Model):
 
             self.enrollment_applied = True
             self.save(update_fields=['enrollment_applied'])
+
+            if self.status in ('promoted', 'demoted') and self.to_class:
+                StudentProgression.objects.update_or_create(
+                    student=self.student,
+                    academic_year=self.academic_year,
+                    from_class=self.to_class,  
+                    defaults={
+                        'to_class': None,    
+                        'status': 'pending', 
+                        'enrollment_applied': False, 
+                        'remarks': None,  
+                        'updated_by': self.updated_by,
+                    },
+                )
