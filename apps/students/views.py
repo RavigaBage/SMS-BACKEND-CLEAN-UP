@@ -1,3 +1,6 @@
+import pandas as pd
+from rest_framework.parsers import MultiPartParser, FormParser
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -370,6 +373,40 @@ class StudentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+    parser_classes = (MultiPartParser, FormParser)
+
+    @action(detail=False, methods=['post'], url_path='bulk-upload')
+    def bulk_upload(self, request):
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'No file uploaded'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            df = pd.read_excel(file)
+
+            required_columns = ['admission_number', 'first_name', 'last_name', 'date_of_birth', 'gender']
+            if not all(col in df.columns for col in required_columns):
+                return Response(
+                    {'error': f'Missing required columns. Required: {required_columns}'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            service = StudentService()
+            results = service.bulk_register_students(df, created_by=request.user)
+
+            return Response({
+                "summary": {
+                    "total": len(df),
+                    "success": results['success_count'],
+                    "failed": results['fail_count']
+                },
+                "errors": results['errors']
+            }, status=status.HTTP_201_CREATED if results['success_count'] > 0 else status.HTTP_400_BAD_REQUEST)
+        
+        except Exception as e:
+            logger.error(f"Bulk upload failed: {str(e)}")
+            return Response({"error": f"Failed to process file: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ParentViewSet(viewsets.ModelViewSet):

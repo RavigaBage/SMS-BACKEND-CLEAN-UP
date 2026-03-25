@@ -217,6 +217,49 @@ class StudentService:
         except Student.DoesNotExist:
             raise Exception("Student not found")
 
+    def bulk_register_students(self, df, created_by):
+        success_count = 0
+        fail_count = 0
+        errors = []
+
+        df = df.fillna('')
+
+        for index, row in df.iterrows():
+            try:
+                student_data = {
+                    'admission_number': str(row['admission_number']),
+                    'first_name': row['first_name'],
+                    'last_name': row['last_name'],
+                    'middle_name': row.get('middle_name', ''),
+                    'date_of_birth': row['date_of_birth'],
+                    'gender': row['gender'].lower(),
+                    'address': row.get('address', ''),
+                    'nationality': row.get('nationality', 'Ghanaian'),
+                }
+
+                class_id = int(row.get('class_id'))
+
+                self.register_student(
+                    student_data=student_data,
+                    parent_data_list=[],
+                    class_id=class_id,
+                    created_by=created_by
+                )
+                success_count += 1
+
+            except Exception as e:
+                fail_count += 1
+                errors.append({
+                    "row": index + 2,
+                    "admission_number": row.get('admission_number', 'N/A'),
+                    "error": str(e)
+                })
+        return {
+            "success_count": success_count,
+            "fail_count": fail_count, 
+            "errors": errors
+        }
+
 
 class ParentService:
     """Service layer for Parent operations"""
