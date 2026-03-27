@@ -217,7 +217,7 @@ class StudentService:
         except Student.DoesNotExist:
             raise Exception("Student not found")
 
-    def bulk_register_students(self, df, created_by):
+    def bulk_upload_students(self, df, created_by):
         success_count = 0
         fail_count = 0
         errors = []

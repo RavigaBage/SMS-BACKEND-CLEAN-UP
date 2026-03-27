@@ -1,5 +1,5 @@
 import pandas as pd
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class StudentViewSet(viewsets.ModelViewSet):
     """ViewSet for Student management"""
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
     
     queryset = Student.objects.all()
     permission_classes = [IsAuthenticated, CanManageStudents]
@@ -374,8 +375,6 @@ class StudentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-    parser_classes = (MultiPartParser, FormParser)
-
     @action(detail=False, methods=['post'], url_path='bulk-upload')
     def bulk_upload(self, request):
         file = request.FILES.get('file')
@@ -383,17 +382,33 @@ class StudentViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No file uploaded'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            df = pd.read_excel(file)
+            try:
+                df = pd.read_csv(file)
+            except UnicodeDecodeError:
+                file.seek(0)
+                df = pd.read_excel(file, encoding='latin-1')
 
+                 
+            # 2. Flexible column check (case-insensitive and strip whitespace)
+            df.columns = [c.lower().strip() for c in df.columns]
+            df = df.dropna(how='all')
+            
+            # 3. Validation
             required_columns = ['admission_number', 'first_name', 'last_name', 'date_of_birth', 'gender']
             if not all(col in df.columns for col in required_columns):
-                return Response(
-                    {'error': f'Missing required columns. Required: {required_columns}'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                missing_cols = [col for col in required_columns if col not in df.columns]
+                return Response({'error': f'Missing required columns: {", ".join(missing_cols)}'}, status=status.HTTP_400_BAD_REQUEST)
             
+            # 4. Data Sanitization
+            df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+            df['admission_number'] = df['admission_number'].astype(str).replace(r'\.0$', '', regex=True)
+
+            if 'class_id' in df.columns:
+                df['class_id'] = df['class_id'].astype(str).replace(r'\.0$', '', regex=True)
+
+            # 5. Execute service
             service = StudentService()
-            results = service.bulk_register_students(df, created_by=request.user)
+            results = service.bulk_upload_students(df, created_by=request.user)
 
             return Response({
                 "summary": {
@@ -402,12 +417,11 @@ class StudentViewSet(viewsets.ModelViewSet):
                     "failed": results['fail_count']
                 },
                 "errors": results['errors']
-            }, status=status.HTTP_201_CREATED if results['success_count'] > 0 else status.HTTP_400_BAD_REQUEST)
+            }, status=status.HTTP_201_CREATED if results['success_count'] > 0 else status.HTTP_207_MULTI_STATUS)
         
         except Exception as e:
-            logger.error(f"Bulk upload failed: {str(e)}")
+            logger.error(f"Bulk upload failed: {str(e)}", exc_info=True)
             return Response({"error": f"Failed to process file: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
-
 
 class ParentViewSet(viewsets.ModelViewSet):
     """ViewSet for Parent management"""
