@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'apps.academic',
     'apps.grades',
     'apps.attendance',
-    'apps.finance',
+    'apps.finance.apps.FinanceConfig',
     'apps.timetable',
     'apps.teachers',
     'apps.summary',

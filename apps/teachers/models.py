@@ -12,6 +12,7 @@ class Teacher(models.Model):
         related_name="teacher_profile",
         limit_choices_to={'role': 'teacher'}
     )
+
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     specialization = models.CharField(
@@ -61,6 +62,7 @@ class Teacher(models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
+    
     
     @property
     def full_name(self):

@@ -31,7 +31,6 @@ class TeacherViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminOrHeadmaster()]
-
     
     def get_serializer_class(self):
         if self.action == 'create':

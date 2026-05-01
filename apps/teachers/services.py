@@ -1,7 +1,11 @@
+from sqlite3 import IntegrityError
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from apps.accounts.models import User
+from apps.staff.services import StaffService
+from apps.staff.models import Staff, SalaryStructure
 from apps.academic.models import Subject
+from datetime import datetime
 from .models import Teacher
 import logging
 
@@ -55,7 +59,37 @@ class TeacherService:
                 emergency_contact=teacher_data.get('emergency_contact', ''),
                 assigned_by=assigned_by
             )
-            if subject_ids:
+            staff_data = {
+                'first_name': teacher_data.get('first_name', user.first_name or ''),
+                'last_name': teacher_data.get('last_name', user.last_name or ''),
+                'date_of_birth': teacher_data.get('date_of_birth'),
+                'phone_number': teacher_data.get('phone_number', ''),
+                'address': teacher_data.get('address', ''),
+                'gender': teacher_data.get('gender', ''),
+                'staff_type': 'teacher',
+                'specialization': teacher_data.get('specialization', ''),
+                'employment_date': teacher_data.get('employment_date'),
+                'national_id': " ",
+                'health_info': " ",
+                'photo_url': " ",
+            }
+        
+            staff_data['salary'] = {
+                'base_salary': 0,
+                'housing_allowance': 0,
+                'transport_allowance': 0,
+                'other_allowances': 0,
+                'effective_from': None,
+            }
+        
+            teacherStaff = self.create_staff_with_teacher(
+                staff_data=staff_data,
+                user=user,
+                created_by=assigned_by
+            )
+  
+
+            if subject_ids and teacherStaff:
                 subjects = Subject.objects.filter(id__in=subject_ids)
                 teacher.subjects.set(subjects)
             
@@ -68,6 +102,56 @@ class TeacherService:
         except Exception as e:
             logger.error(f"Unexpected error creating teacher profile: {str(e)}")
             raise Exception(f"Failed to create teacher profile: {str(e)}")
+    
+    @transaction.atomic
+    def create_staff_with_teacher(self, staff_data,user=None, user_data=None, created_by=None):
+
+        try:
+            staff = Staff.objects.create(
+                    user=user,
+                    first_name=staff_data.get('first_name') or "",
+                    last_name=staff_data.get('last_name') or "",
+                    date_of_birth=staff_data.get('date_of_birth'),  
+                    phone_number=staff_data.get('phone_number') or "",
+                    email=(user.email if user else staff_data.get('email')) or "",
+                    address=staff_data.get('address') or "",
+                    gender="male", 
+                    staff_type=user.role,
+                    specialization=staff_data.get('specialization') or "",
+                    employment_date=staff_data.get('employment_date'), 
+                    national_id=staff_data.get('national_id') or "091202",
+                    health_info=staff_data.get('health_info') or "",
+                    photo_url=staff_data.get('photo_url') or ""
+                )
+            
+            
+            if 'salary' in staff_data:
+                SalaryStructure.objects.create(
+                    staff=staff,
+                    base_salary=staff_data['salary'].get('base_salary', 0),
+                    housing_allowance=staff_data['salary'].get('housing_allowance', 0),
+                    transport_allowance=staff_data['salary'].get('transport_allowance', 0),
+                    other_allowances=staff_data['salary'].get('other_allowances', 0),
+                    effective_from=datetime.now().date()
+                )
+            
+            return {
+                'staff': staff,
+                'user': user,
+            }
+            
+        except ValidationError as e:
+            logger.error(f"Validation error creating staff: {str(e)}")
+            raise
+        except IntegrityError as e:
+            logger.error(f"Integrity error creating staff: {str(e)}")
+            raise ValidationError(f"Database integrity error: {str(e)}")
+        except KeyError as e:
+            logger.error(f"Missing required field: {str(e)}")
+            raise ValidationError(f"Missing required field: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating staff: {str(e)}")
+            raise Exception(f"Failed to create staff: {str(e)}")
     
     @transaction.atomic
     def update_teacher_profile(self, teacher_id, teacher_data):

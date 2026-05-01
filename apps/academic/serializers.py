@@ -91,7 +91,6 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         class_obj = attrs.get('class_obj') or getattr(self.instance, 'class_obj', None)
         academic_year = attrs.get('academic_year')
 
-        # On create, if caller does not provide academic_year, default to class year.
         if self.instance is None and not academic_year and class_obj:
             attrs['academic_year'] = class_obj.academic_year
         elif isinstance(academic_year, str):

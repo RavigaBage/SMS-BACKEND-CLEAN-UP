@@ -167,31 +167,39 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        student_id = self.request.query_params.get('student_id', None)
+
+        student_id = self.request.query_params.get('student_id')
         if student_id:
             queryset = queryset.filter(student_id=student_id)
-        
-        academic_year = self.request.query_params.get('academic_year', None)
+
+        academic_year = self.request.query_params.get('academic_year')
         if academic_year:
             queryset = queryset.filter(academic_year=academic_year)
-                
-        
-        term = self.request.query_params.get('term', None)
+
+        term = self.request.query_params.get('term')
         if term:
             queryset = queryset.filter(term=term)
-        
-        status_filter = self.request.query_params.get('status', None)
+
+        status_filter = self.request.query_params.get('status')
         if status_filter:
             queryset = queryset.filter(status=status_filter)
-        
-        overdue = self.request.query_params.get('overdue', None)
+
+        class_id = self.request.query_params.get('class_id')
+        if class_id:
+            from apps.academic.models import Enrollment
+            student_ids = Enrollment.objects.filter(
+                class_obj_id=class_id,
+                status=Enrollment.EnrollmentStatus.ACTIVE,
+            ).values_list('student_id', flat=True)
+            queryset = queryset.filter(student_id__in=student_ids)
+
+        overdue = self.request.query_params.get('overdue')
         if overdue and overdue.lower() == 'true':
             queryset = queryset.filter(
                 due_date__lt=datetime.now().date(),
                 status__in=['unpaid', 'partial']
             )
-        
+
         return queryset
     
     @action(detail=False, methods=['post'])

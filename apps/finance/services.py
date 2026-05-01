@@ -5,6 +5,12 @@ from .models import Invoice, InvoiceItem, Payment, FeeStructure
 from apps.students.models import Student
 from apps.academic.models import AcademicYear, Class
 from datetime import datetime, timedelta
+from datetime import date, timedelta
+from decimal import Decimal
+from django.db.models import Sum
+from apps.students.models import Student
+from apps.academic.models import Enrollment
+from .models import FeeStructure, Invoice, InvoiceItem
 
 
 class InvoiceService:
@@ -121,6 +127,94 @@ class InvoiceService:
             'invoices': invoices,
             'errors': errors
         }
+    def auto_generate_invoices_for_fee_structure(self, fee_structure):
+
+        logger = __import__('logging').getLogger(__name__)
+
+        if fee_structure.academic_year is None:
+            logger.warning(
+                "FeeStructure pk=%s has no academic_year; skipping auto-invoice.", fee_structure.pk
+            )
+            return
+
+        base_enrollment_qs = Enrollment.objects.filter(
+            status=Enrollment.EnrollmentStatus.ACTIVE,
+            academic_year=fee_structure.academic_year,
+        )
+
+        if fee_structure.class_obj is not None:
+            base_enrollment_qs = base_enrollment_qs.filter(class_obj=fee_structure.class_obj)
+
+        student_ids = base_enrollment_qs.values_list('student_id', flat=True)
+        students = Student.objects.filter(
+            id__in=student_ids,
+            status=Student.Status.ACTIVE,
+        )
+
+        if not students.exists():
+            logger.info(
+                "FeeStructure pk=%s: no eligible students found.", fee_structure.pk
+            )
+            return
+
+        terms = (
+            [Invoice.Term.TERM_1, Invoice.Term.TERM_2, Invoice.Term.TERM_3]
+            if fee_structure.term == FeeStructure.Term.ALL
+            else [fee_structure.term]
+        )
+
+        due_date = date.today() + timedelta(days=30)
+        created_count = 0
+        updated_count = 0
+        skipped_count = 0
+
+        for student in students:
+            for term in terms:
+                invoice = Invoice.objects.filter(
+                    student=student,
+                    academic_year=fee_structure.academic_year,
+                    term=term,
+                ).first()
+
+                if invoice is None:
+                    invoice = Invoice(
+                        student=student,
+                        academic_year=fee_structure.academic_year,
+                        term=term,
+                        total_amount=Decimal('0.00'),
+                        amount_paid=Decimal('0.00'),
+                        balance=Decimal('0.00'),
+                        due_date=due_date,
+                        status=Invoice.InvoiceStatus.UNPAID,
+                        generated_by=None,
+                    )
+                    invoice.save()
+                    created_count += 1
+                else:
+                    if InvoiceItem.objects.filter(
+                        invoice=invoice,
+                        fee_structure=fee_structure,
+                    ).exists():
+                        skipped_count += 1
+                        continue
+                    updated_count += 1
+
+                InvoiceItem.objects.create(
+                    invoice=invoice,
+                    fee_structure=fee_structure,
+                    description=fee_structure.category_name,
+                    amount=fee_structure.amount,
+                )
+
+                invoice.total_amount = (
+                    invoice.items.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                )
+                invoice.save()
+
+        logger.info(
+            "FeeStructure pk=%s auto-invoicing complete: %d created, %d updated, %d skipped.",
+            fee_structure.pk, created_count, updated_count, skipped_count,
+        )
 
 
 class PaymentService:
