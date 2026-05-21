@@ -37,75 +37,57 @@ logger = logging.getLogger(__name__)
 
 
 class LoginView(TokenObtainPairView):
-    """
-    Login endpoint - returns access and refresh tokens
-    
-    POST /api/v1/auth/login/
-    {
-        "email": "admin@school.com",
-        "password": "password"
-    }
-    
-    Returns:
-    {
-        "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-        "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-        "user": {
-            "id": 1,
-            "username": "admin",
-            "email": "admin@school.com",
-            "role": "admin",
-            "role_display": "Admin"
-        }
-    }
-    """
     serializer_class = CustomTokenObtainPairSerializer
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        """Login with exception handling"""
         try:
             return super().post(request, *args, **kwargs)
-            
+
         except (DRFValidationError, ValidationError) as e:
-            logger.error(f"Validation error during login: {str(e)}")
-            
-            if hasattr(e, 'message_dict'):
-                error_detail = e.message_dict
-            elif hasattr(e, 'messages'):
-                error_detail = e.messages[0] if e.messages else str(e)
+
+            if hasattr(e, "detail"):
+
+                if isinstance(e.detail, dict):
+                    first_key = next(iter(e.detail))
+                    error_detail = e.detail[first_key][0]
+
+                elif isinstance(e.detail, list):
+                    error_detail = e.detail[0]
+
+                else:
+                    error_detail = str(e.detail)
+
             else:
                 error_detail = str(e)
-            
+
             return Response(
                 {
-                    'error': f'Validation Error: {error_detail}',
-                    'detail': error_detail
+                    "error": False,
+                    "detail": str(error_detail),
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            
-        except InvalidToken as e:
-            logger.error(f"Invalid token during login: {str(e)}")
-            error_detail = 'Invalid credentials provided.'
+
+        except InvalidToken:
             return Response(
                 {
-                    'error': f'Authentication Error: {error_detail}',
-                    'detail': error_detail
+                    "error": False,
+                    "detail": "Invalid credentials provided.",
                 },
-                status=status.HTTP_401_UNAUTHORIZED
+                status=status.HTTP_401_UNAUTHORIZED,
             )
-            
-        except Exception as e:
-            logger.error(f"Unexpected error during login: {str(e)}", exc_info=True)
-            error_detail = 'An unexpected error occurred during login.'
+
+        except Exception:
             return Response(
                 {
-                    'error': f'Server Error: {error_detail}',
-                    'detail': error_detail
+                    "error": False,
+                    "detail": "An unexpected error occurred during login.",
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
 
 
 class RefreshTokenView(TokenRefreshView):

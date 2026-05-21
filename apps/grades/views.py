@@ -394,11 +394,12 @@ class GradeViewSet(viewsets.ModelViewSet):
         
         class_id = self.request.query_params.get("class")
         academic_year = self.request.query_params.get("academic_year")
-
+        
+        normalized_year = academic_year.replace("/", "-")
         if class_id and academic_year:
             try:
                 context['subject_ranks'] = AcademicReportGenerator.get_subject_ranks_dict(
-                    class_id, academic_year
+                    class_id, normalized_year
                 )
             except Exception as e:
                 logger.error(f"Error getting subject ranks: {str(e)}")

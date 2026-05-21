@@ -11,6 +11,8 @@ from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Timetable, Syllabus
 from apps.accounts.models import User
+from apps.academic.models import Subject
+from apps.teachers.models import Teacher
 from .serializers import TimetableSerializer, SyllabusSerializer, SyllabusListSerializer
 from apps.accounts.permissions import IsAdminOrHeadmaster
 import logging
@@ -19,21 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 class TimetableViewSet(viewsets.ModelViewSet):
-    """
-    Enterprise-grade timetable viewset.
-
-    Features:
-    - Safe filtering
-    - Conflict detection
-    - Clean validation
-    - Role-based permissions
-    """
 
     queryset = Timetable.objects.select_related(
         "class_obj",
         "subject",
         "teacher"
-    ).all()
+    ).all().order_by('id')
 
     serializer_class = TimetableSerializer
     permission_classes = [IsAuthenticated]
@@ -154,6 +147,19 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 {"This teacher is already booked at this time."}
             )
 
+
+    def _check_conflicts_subject(
+        self,
+        subject_id,
+        teacher_id,
+    ):
+
+        teacher = Teacher.objects.get(id=teacher_id);
+
+        if not teacher.subjects.filter(id=subject_id).exists():
+            raise ValidationError(
+                "This teacher is not assigned to this subject."
+            )
    
     def create(self, request, *args, **kwargs):
         try:
@@ -171,6 +177,7 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 term=data.get("term", ""),
                 academic_year=data.get("academic_year", ""),
             )
+            self ._check_conflicts_subject(subject_id=(data.get("subject").id if data.get("subject") else None),teacher_id=(data.get("teacher").id if data.get("teacher") else None))
 
             self.perform_create(serializer)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -268,11 +275,19 @@ class TimetableViewSet(viewsets.ModelViewSet):
         teacher_id = self._get_int_param("teacher_id")
 
         if not teacher_id:
-            raise DjangoValidationError(
-                {"teacher_id query parameter is required."}
+            raise ValidationError(
+                "teacher_id query parameter is required."
             )
+        teacher_user = User.objects.filter(id=teacher_id).first()
+        teacher = Teacher.objects.filter(user=teacher_user).first()
 
-        queryset = Timetable.objects.filter(teacher_id=teacher_id)
+
+        if not teacher:
+            print(list(Teacher.objects.values_list("id", flat=True)))
+            print(Teacher.objects.all(), teacher_id)
+            raise ValidationError("Teacher not found")
+        
+        queryset = Timetable.objects.filter(teacher=teacher)
         serializer = self.get_serializer(queryset, many=True)
 
         return Response(serializer.data)
@@ -518,7 +533,7 @@ def get_syllabus_by_params(request):
         class_id = request.query_params.get('class')
         week_number = request.query_params.get('week_number')
         
-        queryset = Syllabus.objects.all()
+        queryset = Syllabus.objects.all().order_by('id')
         
         if subject_id:
             queryset = queryset.filter(subject_id=subject_id)

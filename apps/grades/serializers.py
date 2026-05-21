@@ -29,12 +29,7 @@ class GradeSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False
     )
-    subject_id = serializers.PrimaryKeyRelatedField(
-        queryset=Subject.objects.all(),
-        source='subject',
-        write_only=True,
-        required=False
-    )
+
     class_id = serializers.PrimaryKeyRelatedField(
         queryset=Class.objects.all(),
         source='class_obj', 
@@ -57,12 +52,18 @@ class GradeSerializer(serializers.ModelSerializer):
         ]
 
     def get_percentage(self, obj):
-        total_possible = getattr(obj, 'exam_total', 100) 
-        return round(float((obj.total_score / total_possible) * 100), 2) if total_possible > 0 else 0
+        return round(float(obj.total_score), 2) if obj.total_score is not None else 0
 
     def get_subject_rank(self, obj):
         ranks_dict = self.context.get('subject_ranks', {})
-        key = (obj.student_id, obj.subject_id, obj.term)
+        key = (int(obj.student_id), int(obj.subject_id), str(obj.term))
+        
+        if not ranks_dict:
+            print("WARNING: subject_ranks context is empty or missing")
+        else:
+            print(f"Looking up key: {key}")
+            print(f"Available keys sample: {list(ranks_dict.keys())[:3]}")
+        
         return ranks_dict.get(key)
 
     def get_class_average(self, obj):
@@ -155,7 +156,7 @@ class StudentTranscriptSerializer(serializers.ModelSerializer):
         if not enrollment: return None
         
         target_year = str(enrollment.class_obj.academic_year).split(' ')[0].replace('/', '-')
-        term = obj.academic_grades.filter(academic_year=target_year).values_list('term', flat=True).first() or "First Term"
+        term = obj.academic_grades.filter(academic_year=target_year,class_obj=enrollment.class_obj ).values_list('term', flat=True).first() or "First Term"
 
         rank_data = AcademicReportGenerator.get_specific_student_rank(
             obj.id, enrollment.class_obj, target_year, term
@@ -189,7 +190,8 @@ class StudentTranscriptSerializer(serializers.ModelSerializer):
         print(year_variants,target_year)
 
         grades_qs = obj.academic_grades.filter(
-            academic_year__in=year_variants
+            academic_year__in=year_variants,
+            class_obj=enrollment.class_obj
         ).select_related('subject', 'student')
 
         terms = list({g.term for g in grades_qs})

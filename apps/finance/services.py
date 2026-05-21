@@ -128,7 +128,6 @@ class InvoiceService:
             'errors': errors
         }
     def auto_generate_invoices_for_fee_structure(self, fee_structure):
-
         logger = __import__('logging').getLogger(__name__)
 
         if fee_structure.academic_year is None:
@@ -141,20 +140,14 @@ class InvoiceService:
             status=Enrollment.EnrollmentStatus.ACTIVE,
             academic_year=fee_structure.academic_year,
         )
-
         if fee_structure.class_obj is not None:
             base_enrollment_qs = base_enrollment_qs.filter(class_obj=fee_structure.class_obj)
 
         student_ids = base_enrollment_qs.values_list('student_id', flat=True)
-        students = Student.objects.filter(
-            id__in=student_ids,
-            status=Student.Status.ACTIVE,
-        )
+        students = Student.objects.filter(id__in=student_ids, status=Student.Status.ACTIVE)
 
         if not students.exists():
-            logger.info(
-                "FeeStructure pk=%s: no eligible students found.", fee_structure.pk
-            )
+            logger.info("FeeStructure pk=%s: no eligible students found.", fee_structure.pk)
             return
 
         terms = (
@@ -163,7 +156,7 @@ class InvoiceService:
             else [fee_structure.term]
         )
 
-        due_date = date.today() + timedelta(days=30)
+        new_due_date = date.today() + timedelta(days=30)
         created_count = 0
         updated_count = 0
         skipped_count = 0
@@ -184,20 +177,44 @@ class InvoiceService:
                         total_amount=Decimal('0.00'),
                         amount_paid=Decimal('0.00'),
                         balance=Decimal('0.00'),
-                        due_date=due_date,
+                        due_date=new_due_date,
                         status=Invoice.InvoiceStatus.UNPAID,
                         generated_by=None,
                     )
                     invoice.save()
                     created_count += 1
+
                 else:
-                    if InvoiceItem.objects.filter(
-                        invoice=invoice,
-                        fee_structure=fee_structure,
-                    ).exists():
+                    if InvoiceItem.objects.filter(invoice=invoice, fee_structure=fee_structure).exists():
                         skipped_count += 1
                         continue
-                    updated_count += 1
+
+                    if invoice.status == Invoice.InvoiceStatus.PAID:
+                        invoice = Invoice(
+                            student=student,
+                            academic_year=fee_structure.academic_year,
+                            term=term,
+                            total_amount=fee_structure.amount,
+                            amount_paid=Decimal('0.00'),
+                            balance=fee_structure.amount,     
+                            due_date=new_due_date,
+                            status=Invoice.InvoiceStatus.UNPAID,
+                            generated_by=None,
+                        )
+                        invoice.save()
+                        created_count += 1
+
+                    elif invoice.status == Invoice.InvoiceStatus.CANCELLED:
+                        skipped_count += 1
+                        logger.info(
+                            "Skipping student=%s term=%s: invoice %s is cancelled.",
+                            student.id, term, invoice.invoice_number,
+                        )
+                        continue
+
+                    else:
+                        invoice.due_date = new_due_date
+                        updated_count += 1
 
                 InvoiceItem.objects.create(
                     invoice=invoice,
@@ -206,9 +223,9 @@ class InvoiceService:
                     amount=fee_structure.amount,
                 )
 
-                invoice.total_amount = (
-                    invoice.items.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-                )
+                new_total = invoice.items.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                invoice.total_amount = new_total
+                invoice.balance = max(new_total - invoice.amount_paid, Decimal('0.00'))
                 invoice.save()
 
         logger.info(
