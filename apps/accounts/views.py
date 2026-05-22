@@ -33,13 +33,24 @@ from .serializers import (
 from .permissions import IsAdminOrHeadmaster
 import logging
 from django.core.mail import send_mail, get_connection
+from django_ratelimit.decorators import ratelimit
+from django.utils.decorators import method_decorator
+
 logger = logging.getLogger(__name__)
 
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
     permission_classes = [AllowAny]
-
+    @method_decorator(
+        ratelimit(
+            key='ip',
+            rate='5/m',
+            method='POST',
+            block=True
+        ),
+        name='post'
+    )
     def post(self, request, *args, **kwargs):
         try:
             return super().post(request, *args, **kwargs)
