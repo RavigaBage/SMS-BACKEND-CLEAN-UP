@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from django.shortcuts import get_object_or_404
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -7,6 +8,7 @@ from django.db.models import Q
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from .models import Teacher
+from apps.accounts.models import User
 from .serializers import (
     TeacherSerializer,
     TeacherCreateSerializer,
@@ -20,6 +22,181 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+
+class TeacherProfileViewSet(viewsets.ModelViewSet):
+
+    queryset = Teacher.objects.select_related(
+        'user',
+        'assigned_by'
+    ).prefetch_related(
+        'subjects'
+    ).all()
+
+    permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
+
+
+    def get_object(self):
+
+
+        user_id = self.kwargs.get('pk')
+        teacher = get_object_or_404(
+            Teacher,
+            id=user_id
+        )
+
+        return teacher
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+
+        return [IsAuthenticated(), IsAdminOrHeadmaster()]
+
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return TeacherCreateSerializer
+
+        elif self.action in ['update', 'partial_update']:
+            return TeacherUpdateSerializer
+
+        elif self.action == 'retrieve':
+            return TeacherDetailSerializer
+
+        return TeacherSerializer
+
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, 'role') and user.role == 'teacher':
+            queryset = queryset.filter(user=user)
+            return queryset
+
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(
+                is_active=is_active.lower() == 'true'
+            )
+
+        specialization = self.request.query_params.get('specialization')
+        if specialization:
+            queryset = queryset.filter(
+                specialization__icontains=specialization
+            )
+
+        subject_id = self.request.query_params.get('subject_id')
+        if subject_id:
+            queryset = queryset.filter(
+                subjects__id=subject_id
+            )
+
+        user_id = self.request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(
+                user__id=user_id
+            )
+
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(user__username__icontains=search)
+            )
+
+        return queryset.order_by('id')
+
+
+    def create(self, request, *args, **kwargs):
+        """Create a teacher profile"""
+
+        serializer = self.get_serializer(data=request.data)
+
+        try:
+            serializer.is_valid(raise_exception=True)
+
+            service = TeacherService()
+
+            teacher = service.create_teacher_profile(
+                teacher_data=serializer.validated_data,
+                assigned_by=request.user
+            )
+
+            response_serializer = TeacherSerializer(teacher)
+
+            return Response(
+                response_serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        except (DRFValidationError, ValidationError) as e:
+
+            logger.error(
+                f"Validation error creating teacher: {str(e)}"
+            )
+
+            if hasattr(e, 'message_dict'):
+                error_detail = e.message_dict
+
+            elif hasattr(e, 'messages'):
+                error_detail = (
+                    e.messages[0]
+                    if e.messages
+                    else str(e)
+                )
+
+            else:
+                error_detail = str(e)
+
+            return Response(
+                {
+                    'error': f'Validation Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except IntegrityError as e:
+
+            logger.error(
+                f"Integrity error creating teacher: {str(e)}"
+            )
+
+            error_detail = (
+                'Teacher profile already exists for this user '
+                'or database constraint violated.'
+            )
+
+            return Response(
+                {
+                    'error': f'Database Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception as e:
+
+            logger.error(
+                f"Unexpected error creating teacher: {str(e)}",
+                exc_info=True
+            )
+
+            error_detail = (
+                'An unexpected error occurred while '
+                'creating the teacher profile.'
+            )
+
+            return Response(
+                {
+                    'error': f'Server Error: {error_detail}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class TeacherViewSet(viewsets.ModelViewSet):
     """ViewSet for Teacher management"""

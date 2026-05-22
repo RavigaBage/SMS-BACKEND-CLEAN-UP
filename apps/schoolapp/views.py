@@ -268,7 +268,7 @@ class RegenerateInviteView(APIView):
             primary_student = wards.first()
             primary_student_name = primary_student.full_name if primary_student else "your child"
             primary_class = primary_student.class_obj.class_name if primary_student and primary_student.class_obj else "N/A"
-            invite_link = f"http://localhost:3000/parent/activate?code={invite.code}"
+            invite_link = f"http://localhost:3000/Home/profiles/parents/activate?code={invite.code}"
             html_message = f"""
                 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">

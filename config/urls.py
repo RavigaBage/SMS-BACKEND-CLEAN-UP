@@ -16,7 +16,7 @@ from apps.academic.views import (
     AcademicYearViewSet, SubjectViewSet, ClassViewSet,
     EnrollmentViewSet, SubjectAssignmentViewSet
 )
-from apps.teachers.views import TeacherViewSet
+from apps.teachers.views import TeacherViewSet,TeacherProfileViewSet
 from apps.grades.views import GradeViewSet,TranscriptViewSet
 from apps.attendance.views import AttendanceViewSet
 from apps.finance.views import (
@@ -46,6 +46,7 @@ router = routers.DefaultRouter()
 
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'staff', StaffViewSet, basename='staff')
+router.register(r'teacherProfile',TeacherProfileViewSet, basename='teacherProfile')
 router.register(r'salary-structures', SalaryStructureViewSet, basename='salary-structure')
 router.register(r'salary-payments', SalaryPaymentViewSet, basename='salary-payment')
 router.register(r'staff-attendance', StaffAttendanceViewSet, basename='staff-attendance')
