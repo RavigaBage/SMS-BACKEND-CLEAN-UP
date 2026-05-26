@@ -35,7 +35,8 @@ INSTALLED_APPS = [
     'apps.summary',
     'apps.schoolapp',
     'apps.settings',
-    'apps.studentManager'
+    'apps.studentManager',
+    'apps.admission'
 ]
 
 MIDDLEWARE = [
