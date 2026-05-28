@@ -99,7 +99,7 @@ urlpatterns = [
     path('auth/me/', CurrentUserView.as_view(), name='current-user'),
 
     path('api/dashboard-summary/', DashboardSummary.as_view(), name='dashboard-summary'),
-    path('', include(router.urls)),
+    path('api/', include(router.urls)),
 
     path('auth/login/',    AyaanaLoginView.as_view(),  name='auth_login'),
     path('auth/refresh/',  TokenRefreshView.as_view(), name='auth_refresh'),

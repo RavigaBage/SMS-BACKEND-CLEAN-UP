@@ -13,6 +13,12 @@ class AdmissionViewset(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsAdminOrHeadmaster]
     queryset = Admission.objects.all()
 
+    def get_permissions(self):
+        if self.action == 'create':
+            return []
+        
+        return [permission() for permission in self.permission_classes]
+
     def get_queryset(self):
 
         queryset = super().get_queryset()
