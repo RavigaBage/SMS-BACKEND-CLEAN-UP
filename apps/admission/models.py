@@ -4,7 +4,8 @@ from django.core.validators import RegexValidator
 
 class Admission(models.Model):
 
- 
+    enrolled = models.BooleanField(default=False)
+
     GENDER_CHOICES = [
         ('male', 'Male'),
         ('female', 'Female'),

@@ -569,6 +569,23 @@ class ParentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        student = self.get_object()
+        student.status = 'active'
+        student.save()
+        return Response({'message': 'Student approved'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def enroll(self, request, pk=None):
+        student = self.get_object()
+        class_id = request.data.get('class_id')
+        if not class_id:
+            return Response({'error': 'class_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        service = StudentService()
+        enrollment = service.transfer_student(student.id, class_id)
+        return Response({'message': 'Student enrolled'}, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['get'])
     def children(self, request, pk=None):
         """Get all children linked to a parent with exception handling"""
